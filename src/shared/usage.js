@@ -231,7 +231,12 @@ function normalizeModelName(value) {
 
 function normalizeModelNameForClient(value, client) {
   const normalized = normalizeModelName(value);
-  if (!normalized || normalizeClientName(client) !== REASONIX_CLIENT) return normalized;
+  const normalizedClient = normalizeClientName(client);
+  // Antigravity's historical RPC usage rows often contain no selected model
+  // and Tokscale serializes that absence as `unknown`. Keep the fact that the
+  // source was auto-detected without presenting a fake Gemini/Claude model.
+  if (normalizedClient === 'antigravity' && normalized === 'unknown') return 'auto-detected';
+  if (!normalized || normalizedClient !== REASONIX_CLIENT) return normalized;
   const qualified = normalized.match(/^(?:deepseek|deepseek-flash)\/(.+)$/);
   return qualified?.[1] || normalized;
 }

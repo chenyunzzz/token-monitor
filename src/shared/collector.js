@@ -53,6 +53,8 @@ const {
 const { resolveReasonixStatsDir, REASONIX_SOURCE_CHECK_ID } = require('./reasonixPaths');
 const { resolveDshSessionsDir, DSH_SOURCE_CHECK_ID } = require('./dshPaths');
 const { indexDshSessionHeaders, readDshSessionHeader, resolveDshSessionsRoot } = require('./dshSessionFiles');
+const { buildDshHistoryGraph, buildDshPeriods, collectDshRows } = require('./dshUsage');
+const { collectAntigravityCliModels, enrichAntigravityJson } = require('./antigravityCliUsage');
 const {
   createReasonixNativeSessionCache,
   isReasonixNativeSessionPath,
@@ -1391,6 +1393,10 @@ async function collectHistoryOnce(options) {
     rawGraphs.push(options.qoderCnGraph);
     histories.push(normalizeHistory(parseGraphResult(options.qoderCnGraph), { capDays, todayKey }));
   }
+  if (options.dshGraph) {
+    rawGraphs.push(options.dshGraph);
+    histories.push(normalizeHistory(parseGraphResult(options.dshGraph), { capDays, todayKey }));
+  }
   if (options.dailyHistoryArchiveEnabled) {
     try {
       const retainedGraph = retainDailyHistory(rawGraphs, {
@@ -1512,6 +1518,9 @@ async function collectUsageOnce(options) {
   let promaPeriods = null;
   let promaRows = null;
   let promaPricing = null;
+  let dshPeriods = null;
+  let dshRows = null;
+  let antigravityCliModels = null;
   let qoderCnPeriods = null;
   let qoderCnRows = null;
   let qoderCnPricing = null;
@@ -1561,6 +1570,30 @@ async function collectUsageOnce(options) {
         if (typeof options.logger === 'function') options.logger(`proma parse failed: ${err.message}`);
       }
     }
+    if (trackedClientSet.has('dsh') && (!targetRequested || targetClients.includes('dsh'))) {
+      try {
+        dshRows = collectDshRows({
+          homeDir: options.homeDir || os.homedir(),
+          env: options.env || process.env,
+          platform: platformValue
+        });
+        dshPeriods = buildDshPeriods({ rows: dshRows, now: collectedAt, allTimeSince });
+        dshPeriods = {
+          today: extractUsageFromTokscale(dshPeriods.today, { providerHints }),
+          month: extractUsageFromTokscale(dshPeriods.month, { providerHints }),
+          allTime: extractUsageFromTokscale(dshPeriods.allTime, { providerHints })
+        };
+      } catch (err) {
+        if (typeof options.logger === 'function') options.logger(`dsh parse failed: ${err.message}`);
+      }
+    }
+    if (trackedClientSet.has('antigravity') && (!targetRequested || targetClients.includes('antigravity'))) {
+      try {
+        antigravityCliModels = collectAntigravityCliModels({ roots: [antigravityCliDataDir()] });
+      } catch (err) {
+        if (typeof options.logger === 'function') options.logger(`antigravity model enrichment failed: ${err.message}`);
+      }
+    }
     if (includesQoderCn && (!targetRequested || targetClients.includes('qodercn'))) {
       try {
         const qoderCnSinceMs = anchorUsed ? new Date(collectedAt.getFullYear(), collectedAt.getMonth(), collectedAt.getDate()).getTime() : undefined;
@@ -1597,7 +1630,7 @@ async function collectUsageOnce(options) {
       if (scanClients) {
         const todayJson = await runTokscaleFn({ clients: scanClients, flags: ['--today'], commandTimeoutMs, signal: options.signal });
         throwIfAborted(options.signal);
-        const bundle = extractUsageBundleFromTokscale(todayJson, { providerHints });
+        const bundle = extractUsageBundleFromTokscale(enrichAntigravityJson(todayJson, antigravityCliModels), { providerHints });
         freshPartitions = bundle.byClient;
         const unattributed = freshPartitions[UNATTRIBUTED_USAGE_CLIENT];
         const attributedClients = Object.keys(freshPartitions).filter((client) => client !== UNATTRIBUTED_USAGE_CLIENT);
@@ -1622,7 +1655,7 @@ async function collectUsageOnce(options) {
           // anchor partition. Rebuild the complete today snapshot instead.
           const fullTodayJson = await runTokscaleFn({ clients: tokscaleClients, flags: ['--today'], commandTimeoutMs, signal: options.signal });
           throwIfAborted(options.signal);
-          freshPartitions = extractUsageBundleFromTokscale(fullTodayJson, { providerHints }).byClient;
+          freshPartitions = extractUsageBundleFromTokscale(enrichAntigravityJson(fullTodayJson, antigravityCliModels), { providerHints }).byClient;
           useTargetedPartitions = false;
         } else if (targetRequested) {
           // Empty tokscale output uses the unattributed fallback shape. Keep the
@@ -1631,6 +1664,7 @@ async function collectUsageOnce(options) {
         }
       }
       if (promaPeriods) freshPartitions.proma = promaPeriods.today;
+      if (dshPeriods) freshPartitions.dsh = dshPeriods.today;
       if (qoderCnPeriods) freshPartitions.qodercn = qoderCnPeriods.today;
       if (qoderCnPeriodReadFailed && anchor.todayPartitions?.qodercn) {
         // A transient local.db read failure must not turn the existing Qoder CN
@@ -1662,19 +1696,19 @@ async function collectUsageOnce(options) {
       // is what let the issue #15 self-trigger loop spike tokscale past 500% CPU.
       const todayJson = await runTokscaleFn({ clients: tokscaleClients, flags: ['--today'], commandTimeoutMs, signal: options.signal });
       throwIfAborted(options.signal);
-      const todayBundle = extractUsageBundleFromTokscale(todayJson, { providerHints });
+      const todayBundle = extractUsageBundleFromTokscale(enrichAntigravityJson(todayJson, antigravityCliModels), { providerHints });
       today = todayBundle.period;
       todayPartitions = todayBundle.byClient;
       if (typeof options.onProgress === 'function') decorateLocalPeriods({ today });
       emitProgress({ today });
       const monthJson = await runTokscaleFn({ clients: tokscaleClients, flags: ['--month'], commandTimeoutMs, signal: options.signal });
       throwIfAborted(options.signal);
-      month = extractUsageFromTokscale(monthJson, { providerHints });
+      month = extractUsageFromTokscale(enrichAntigravityJson(monthJson, antigravityCliModels), { providerHints });
       if (typeof options.onProgress === 'function') decorateLocalPeriods({ today, month });
       emitProgress({ today, month });
       const allTimeJson = await runTokscaleFn({ clients: tokscaleClients, flags: ['--since', allTimeSince], commandTimeoutMs, signal: options.signal });
       throwIfAborted(options.signal);
-      allTime = extractUsageFromTokscale(allTimeJson, { providerHints });
+      allTime = extractUsageFromTokscale(enrichAntigravityJson(allTimeJson, antigravityCliModels), { providerHints });
     }
     // Always decorate: session timestamps drive the recency sort regardless of the
     // Projects opt-out (issue #182). decorateLocalPeriods gates only project identity
@@ -1697,6 +1731,12 @@ async function collectUsageOnce(options) {
       month = mergePeriods(month, promaPeriods.month);
       allTime = mergePeriods(allTime, promaPeriods.allTime);
       todayPartitions = { ...(todayPartitions || {}), proma: promaPeriods.today };
+    }
+    if (dshPeriods && !anchorUsed) {
+      today = mergePeriods(today, dshPeriods.today);
+      month = mergePeriods(month, dshPeriods.month);
+      allTime = mergePeriods(allTime, dshPeriods.allTime);
+      todayPartitions = { ...(todayPartitions || {}), dsh: dshPeriods.today };
     }
     if (qoderCnPeriods && !anchorUsed) {
       today = mergePeriods(today, qoderCnPeriods.today);
@@ -1933,6 +1973,7 @@ async function collectUsageOnce(options) {
     const history = await collectHistoryOnce({
       clients: tokscaleClients,
       promaGraph: includesProma ? buildPromaHistoryGraph({ rows: promaRows || collectPromaRows(), pricingByModel: promaPricing || {} }) : null,
+      dshGraph: trackedClientSet.has('dsh') ? buildDshHistoryGraph({ rows: dshRows || collectDshRows({ homeDir: options.homeDir || os.homedir(), env: options.env || process.env, platform: platformValue }) }) : null,
       qoderCnGraph: historyQoderCnGraph || null,
       historyEnabled: options.historyEnabled,
       commandTimeoutMs: options.historyTimeoutMs,

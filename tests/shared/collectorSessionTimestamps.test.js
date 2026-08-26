@@ -336,15 +336,11 @@ test('applySessionTimestamps does not re-walk the DSH tree for already-known ses
   }
 });
 
-// The test above proves sessionTimestampMap's own caching logic works when a
-// caller shares one deps object across calls — but collectUsageOnce (what a
-// real collector tick actually calls) used to rebuild dshSessionFileCache
-// fresh every time, which would have made that caching a no-op in production
-// regardless of how correct the logic above is. This drives two real
-// collectUsageOnce() calls, the way startCollector's tick loop does, with
-// nothing shared between them except process-wide module state, and asserts
-// the DSH sessions tree is only ever walked on the first one.
-test('collectUsageOnce does not re-walk the DSH sessions tree on a second real tick', async () => {
+// collectUsageOnce (what a real collector tick actually calls) also parses the
+// durable DSH transcript directly. This drives two real collectUsageOnce()
+// calls, the way startCollector's tick loop does, and verifies that DSH usage
+// remains available across repeated scans.
+test('collectUsageOnce includes DSH usage across repeated real ticks', async () => {
   const { collectUsageOnce } = freshCollector();
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'tm-dsh-e2e-'));
   const sessionsRoot = path.join(home, '.dsh', 'sessions');
@@ -352,7 +348,18 @@ test('collectUsageOnce does not re-walk the DSH sessions tree on a second real t
   try {
     const dir = path.join(sessionsRoot, 'proj', 'session-e2e');
     fs.mkdirSync(dir, { recursive: true });
-    fs.writeFileSync(path.join(dir, 'session.jsonl'), `${JSON.stringify({ type: 'session', id: 'session-e2e', createdAt: 1750000000000 })}\n`);
+    fs.writeFileSync(path.join(dir, 'session.jsonl'), [
+      JSON.stringify({ type: 'session', id: 'session-e2e', createdAt: 1750000000000 }),
+      JSON.stringify({
+        type: 'assistant/message',
+        seq: 1,
+        time: 1750000001000,
+        data: {
+          message: { id: 'message-e2e', source: { provider: 'opencode-go', model: 'deepseek-v4-flash' } },
+          usage: { inputTokens: 10, outputTokens: 5 }
+        }
+      })
+    ].join('\n') + '\n');
 
     // dshSessionFiles() walks the tree via fs.readdirSync(dir, {withFileTypes}).
     // Counting only calls rooted under the DSH sessions dir isolates "the
@@ -364,9 +371,7 @@ test('collectUsageOnce does not re-walk the DSH sessions tree on a second real t
       return realReaddirSync(target, ...rest);
     };
 
-    const stubTokscale = async () => ({
-      entries: [{ client: 'dsh', sessionId: 'session-e2e', model: 'deepseek-v4-flash', input: 10, output: 5, cost: 0.001 }]
-    });
+    const stubTokscale = async () => ({ entries: [] });
     const baseOptions = {
       clients: 'dsh',
       allTimeSince: '2024-01-01',
@@ -376,6 +381,7 @@ test('collectUsageOnce does not re-walk the DSH sessions tree on a second real t
       limitsEnabled: false,
       historyEnabled: false,
       homeDir: home,
+      now: new Date(1750000002000),
       runTokscale: stubTokscale,
       collectWslUsage: async () => ({ bundle: { today: {}, month: {}, allTime: {} }, detected: [] })
     };
@@ -387,7 +393,7 @@ test('collectUsageOnce does not re-walk the DSH sessions tree on a second real t
 
     const second = await collectUsageOnce(baseOptions);
     assert.equal(second.today.sessions['dsh:session-e2e'].startedAt, new Date(1750000000000).toISOString());
-    assert.equal(walks, walksAfterFirstTick, 'a second collectUsageOnce() call must not rebuild and re-walk the DSH tree');
+    assert.ok(walks > walksAfterFirstTick, 'the second real tick must re-read DSH transcripts so new usage is visible');
   } finally {
     fs.readdirSync = realReaddirSync;
     delete require.cache[collectorPath];

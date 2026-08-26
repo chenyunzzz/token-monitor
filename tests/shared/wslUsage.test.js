@@ -5,7 +5,10 @@ const test = require('node:test');
 
 const {
   isWslInstalled,
+  distroNamesFromEnvironment,
+  distroNamesFromRegistry,
   listRunningWslDistros,
+  listWslDistros,
   emptyWslBundle,
   wslUsageHomes,
   homeHasData,
@@ -100,6 +103,45 @@ test('listRunningWslDistros returns [] when wsl.exe throws', () => {
   assert.deepEqual(out, []);
 });
 
+test('distroNamesFromRegistry parses registered WSL distro names', () => {
+  const out = distroNamesFromRegistry([
+    'HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Lxss\\{one}',
+    '    DistributionName    REG_SZ    Ubuntu-24.04',
+    'HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Lxss\\{two}',
+    '    DistributionName    REG_EXPAND_SZ    docker-desktop',
+    '    DistributionName    REG_SZ    Ubuntu-24.04'
+  ].join('\n'));
+  assert.deepEqual(out, ['Ubuntu-24.04', 'docker-desktop']);
+});
+
+test('distroNamesFromEnvironment finds distro names in WSL UNC paths', () => {
+  assert.deepEqual(
+    distroNamesFromEnvironment({
+      REASONIX_HOME: '\\\\wsl$\\Ubuntu-24.04\\home\\u\\.reasonix',
+      OTHER: '\\\\wsl.localhost\\Ubuntu-24.04\\home\\u\\.dsh',
+      LOCAL: 'C:\\Users\\u'
+    }),
+    ['Ubuntu-24.04']
+  );
+});
+
+test('listWslDistros falls back to registered distros when wsl list is denied', () => {
+  const calls = [];
+  const out = listWslDistros({
+    platform: 'win32',
+    env: { REASONIX_HOME: '\\\\wsl$\\Ubuntu-24.04\\home\\u\\.reasonix' },
+    exec: (cmd, args) => {
+      calls.push([cmd, args]);
+      if (cmd === 'reg' && args.length === 2) return 'Lxss';
+      if (cmd === 'wsl.exe') throw new Error('拒绝访问');
+      return 'HKEY...\n  DistributionName REG_SZ Ubuntu-24.04';
+    }
+  });
+  assert.deepEqual(out, ['Ubuntu-24.04']);
+  assert.ok(calls.some(([cmd]) => cmd === 'wsl.exe'));
+  assert.ok(calls.some(([cmd, args]) => cmd === 'reg' && args.includes('/s')));
+});
+
 test('emptyWslBundle has three empty periods', () => {
   const b = emptyWslBundle();
   assert.equal(b.today.totalTokens, 0);
@@ -118,6 +160,21 @@ test('wslUsageHomes keeps homes with a data marker, drops empty ones', () => {
     existsSync: (p) => p === '\\\\wsl$\\Ubuntu\\home\\alice\\.claude\\projects'
   });
   assert.deepEqual(homes, ['\\\\wsl$\\Ubuntu\\home\\alice']);
+});
+
+test('wslUsageHomes tries wsl.localhost when the legacy UNC root is unreadable', () => {
+  const home = '\\\\wsl.localhost\\Ubuntu\\home\\alice';
+  const homes = wslUsageHomes({
+    platform: 'win32',
+    exec: (cmd) => (cmd === 'reg' ? 'Lxss' : 'Ubuntu\n'),
+    readdirSync: (dir) => {
+      if (dir === '\\\\wsl$\\Ubuntu\\home') throw new Error('legacy provider unavailable');
+      if (dir === '\\\\wsl.localhost\\Ubuntu\\home') return ['alice'];
+      return [];
+    },
+    existsSync: (p) => p === `${home}\\.dsh\\sessions`
+  });
+  assert.deepEqual(homes, [home]);
 });
 
 test('wslUsageHomes checks the root home too', () => {
@@ -366,6 +423,63 @@ test('collectWslUsage parses Proma-only WSL homes without calling tokscale', asy
   assert.equal(bundle.allTime.clients.proma, 30);
 });
 
+test('collectWslUsage parses DSH-only WSL homes without calling tokscale', async () => {
+  const home = '\\\\wsl$\\Ubuntu\\home\\u';
+  let tokScaleCalled = false;
+  const { bundle, detected, successfulHomes } = await collectWslUsage(
+    {
+      clients: '',
+      trackedClients: 'dsh',
+      allTimeSince: '2025-01-01',
+      now: new Date('2026-07-10T08:00:00.000Z'),
+      runTokscale: async () => { tokScaleCalled = true; return { entries: [] }; },
+      collectDshRows: (options) => {
+        assert.deepEqual(options.roots, [`${home}\\.dsh\\sessions`]);
+        return [{ client: 'dsh', sessionId: 's1', model: 'deepseek-v4-flash', provider: 'opencode-go', input: 9, output: 1, cacheRead: 0, cacheWrite: 0, reasoning: 0, totalTokens: 10, lastUsedAt: '2026-07-10T07:00:00.000Z' }];
+      },
+      buildDshPeriods: () => ({
+        today: { entries: [{ client: 'dsh', sessionId: 's1', model: 'deepseek-v4-flash', provider: 'opencode-go', input: 9, output: 1, totalTokens: 10 }] },
+        month: { entries: [{ client: 'dsh', sessionId: 's1', model: 'deepseek-v4-flash', provider: 'opencode-go', input: 9, output: 1, totalTokens: 10 }] },
+        allTime: { entries: [{ client: 'dsh', sessionId: 's1', model: 'deepseek-v4-flash', provider: 'opencode-go', input: 9, output: 1, totalTokens: 10 }] }
+      })
+    },
+    {
+      platform: 'win32',
+      exec: (cmd) => (cmd === 'reg' ? 'Lxss' : 'Ubuntu\n'),
+      readdirSync: () => ['u'],
+      existsSync: (value) => value === `${home}\\.dsh\\sessions`
+    }
+  );
+  assert.equal(tokScaleCalled, false);
+  assert.deepEqual(detected, ['dsh']);
+  assert.equal(successfulHomes, 1);
+  assert.equal(bundle.allTime.clients.dsh, 10);
+  assert.equal(bundle.allTime.clientProviderModels.dsh['opencode-go']['deepseek-v4-flash'], 10);
+});
+
+test('collectWslUsage enriches unknown Antigravity models from the matching WSL conversation id', async () => {
+  const home = '\\\\wsl$\\Ubuntu\\home\\u';
+  const { bundle } = await collectWslUsage(
+    {
+      clients: 'antigravity',
+      trackedClients: 'antigravity',
+      allTimeSince: '2025-01-01',
+      collectAntigravityCliModels: () => new Map([['conversation-1', 'gemini-3.7-flash-high']]),
+      runTokscale: async ({ flags }) => ({
+        entries: [{ client: 'antigravity-cli', sessionId: 'conversation-1', model: 'unknown', provider: 'antigravity', input: flags.includes('--since') ? 30 : 10, output: 0, cost: 0 }]
+      })
+    },
+    {
+      platform: 'win32',
+      exec: (cmd) => (cmd === 'reg' ? 'Lxss' : 'Ubuntu\n'),
+      readdirSync: () => ['u'],
+      existsSync: (value) => value === `${home}\\.gemini\\antigravity-cli\\conversations`
+    }
+  );
+  assert.equal(bundle.allTime.providerModels.antigravity['gemini-3.7-flash-high'], 30);
+  assert.equal(bundle.allTime.providerModels.antigravity.unknown, undefined);
+});
+
 test('collectWslUsage applies the cached Proma price to WSL rows', async () => {
   const home = '\\\\wsl$\\Ubuntu\\home\\u';
   let pricingRows = null;
@@ -399,6 +513,32 @@ test('collectWslUsage returns empty bundle when no homes', async () => {
     { platform: 'darwin' }
   );
   assert.equal(bundle.today.totalTokens, 0);
+});
+
+test('collectWslUsage falls back to wsl.exe when the WSL share is unreadable', async () => {
+  const sessionText = [
+    JSON.stringify({ type: 'session', id: 'remote-s1', createdAt: '2026-08-26T08:00:00Z' }),
+    JSON.stringify({ type: 'assistant/message', seq: 1, time: '2026-08-26T09:00:00Z', source: { provider: 'opencode-go', model: 'deepseek-v4-flash' }, data: { usage: { inputTokens: 8, outputTokens: 2 } } })
+  ].join('\n');
+  const calls = [];
+  const deps = {
+    platform: 'win32',
+    exec: (cmd, args) => {
+      calls.push([cmd, args]);
+      if (cmd === 'reg' && args.length === 2) return 'Lxss';
+      if (cmd === 'wsl.exe' && args[0] === '--list') return 'Ubuntu\n';
+      if (cmd === 'wsl.exe' && args.includes('find') && args.includes('/home')) return '/home/u/.dsh/sessions\n';
+      if (cmd === 'wsl.exe' && args.includes('find') && args.includes('/home/u/.dsh/sessions')) return '/home/u/.dsh/sessions/project/remote-s1/session.jsonl\0';
+      if (cmd === 'wsl.exe' && args.includes('cat')) return sessionText;
+      throw new Error(`unexpected command: ${cmd} ${args.join(' ')}`);
+    },
+    readdirSync: () => { throw new Error('UNC access denied'); },
+    existsSync: () => false
+  };
+  const result = await collectWslUsage({ clients: '', trackedClients: 'dsh', now: new Date('2026-08-26T12:00:00Z') }, deps);
+  assert.equal(result.bundle.allTime.clients.dsh, 10);
+  assert.deepEqual(result.detected, ['dsh']);
+  assert.ok(calls.some(([cmd, args]) => cmd === 'wsl.exe' && args.includes('cat')));
 });
 
 test('collectWslUsage logs and skips a home that throws, keeps others', async () => {

@@ -26,6 +26,14 @@
     return labels[provider] || provider;
   }
 
+  function providerModelLabel(provider, model) {
+    const normalizedProvider = String(provider || '').trim().toLowerCase();
+    const normalizedModel = String(model || '').trim().toLowerCase();
+    return normalizedProvider === 'antigravity' && normalizedModel === 'unknown'
+      ? 'auto-detected'
+      : model;
+  }
+
   function modelsForClient(period, client, clientValue, unclassifiedLabel) {
     const legacyModels = positiveEntries(period.clientModels?.[client]);
     const legacyTotals = new Map(legacyModels);
@@ -42,7 +50,7 @@
         accountedByModel.set(model, (accountedByModel.get(model) || 0) + value);
         providerRows.push({
           key: `provider:${provider}/${model}`,
-          name: `${providerLabel(provider)} / ${model}`,
+          name: `${providerLabel(provider)} / ${providerModelLabel(provider, model)}`,
           value
         });
       }

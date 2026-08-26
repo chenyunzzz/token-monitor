@@ -107,8 +107,8 @@ test('an unknown-client rejection probes once, retries, then filters proactively
     }
     const clientIndex = args.indexOf('--client');
     const requested = args[clientIndex + 1];
-    if (requested.split(',').includes('dsh')) {
-      return exitChild(2, 'error: invalid value \'dsh\' for --client');
+    if (requested.split(',').includes('unsupported')) {
+      return exitChild(2, 'error: invalid value \'unsupported\' for --client');
     }
     return jsonChild({ entries: [] });
   };
@@ -116,7 +116,7 @@ test('an unknown-client rejection probes once, retries, then filters proactively
   try {
     const { collectUsageOnce } = freshCollector();
     await collectUsageOnce({
-      clients: 'claude,dsh',
+      clients: 'claude,unsupported',
       allTimeSince: '2024-01-01',
       commandTimeoutMs: 1000,
       deviceId: 'test-device',
@@ -130,7 +130,7 @@ test('an unknown-client rejection probes once, retries, then filters proactively
     const clientArgsList = calls
       .filter((args) => !args.includes('--help'))
       .map((args) => args[args.indexOf('--client') + 1]);
-    assert.equal(clientArgsList.filter((csv) => csv.includes('dsh')).length, 1, 'only the first scan ever asks for the unsupported id');
+    assert.equal(clientArgsList.filter((csv) => csv.includes('unsupported')).length, 1, 'only the first scan ever asks for the unsupported id');
     // The first scan's own retry plus the two later scans (filtered proactively
     // once the identity's capability set is known) — three filtered spawns.
     assert.equal(clientArgsList.filter((csv) => csv === 'claude').length, 3);

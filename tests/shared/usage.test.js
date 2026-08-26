@@ -946,6 +946,16 @@ test('provider hints attribute bare proxy model ids without guessing unconfigure
   assert.ok(!hinted.providerModels.other);
 });
 
+test('antigravity unknown model rows are labeled auto-detected without inventing a model', () => {
+  const { extractUsageFromTokscale } = require('../../src/shared/usage');
+  const period = extractUsageFromTokscale({
+    entries: [{ client: 'antigravity', provider: 'antigravity', model: 'unknown', input: 7 }]
+  });
+  assert.equal(period.models['auto-detected'], 7);
+  assert.equal(period.providerModels.antigravity['auto-detected'], 7);
+  assert.equal(period.models.unknown, undefined);
+});
+
 test('extractUsageBundleFromTokscale partitions every aggregate field exactly by client', () => {
   const bundle = extractUsageBundleFromTokscale({
     entries: [

@@ -5,7 +5,11 @@
 // `claude` client. tokscale 4.0.5 fixed the scan path but does not dedup imports, and
 // the imported rows aren't cleanly separable (MiMo is multi-model). It stays a known
 // client — one click to enable in Settings → tools — until tokscale dedups upstream.
-const PARSE_LOCAL_CLIENTS = Object.freeze(['proma', 'qodercn']);
+// These clients are parsed from their durable local stores instead of passed
+// to Tokscale. dsh is included because installed Tokscale releases may not
+// recognize its client id, while its JSONL usage format is stable enough to
+// decode directly.
+const PARSE_LOCAL_CLIENTS = Object.freeze(['proma', 'qodercn', 'dsh']);
 const DEFAULT_CLIENTS = 'claude,codex,opencode,hermes,openclaw,cursor,antigravity,cline,kimi,qwen,grok,copilot,pi,zed,kilocode,commandcode,zcode,kiro,codebuddy,workbuddy,proma,reasonix,dsh,cherrystudio';
 
 function insertClientBefore(clientsCsv, clientId, beforeClientId) {

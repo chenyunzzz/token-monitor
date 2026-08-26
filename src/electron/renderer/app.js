@@ -2277,6 +2277,17 @@ function providerDisplayName(provider) {
   return names[provider] || provider;
 }
 
+function providerModelDisplayName(provider, model) {
+  const normalizedProvider = String(provider || '').trim().toLowerCase();
+  const normalizedModel = String(model || '').trim().toLowerCase();
+  // Older Antigravity usage snapshots only recorded the provider and emitted
+  // `unknown` for the selected model. Keep the stored bucket intact for exact
+  // totals, but make its meaning explicit in the visible breakdown.
+  return normalizedProvider === 'antigravity' && normalizedModel === 'unknown'
+    ? 'auto-detected'
+    : model;
+}
+
 function modelAttributionRows(period) {
   const values = {};
   const costs = {};
@@ -2291,12 +2302,13 @@ function modelAttributionRows(period) {
       const key = `provider:${provider}/${model}`;
       const tokens = Math.max(0, Number(value) || 0);
       const cost = Math.max(0, Number(period?.providerModelCosts?.[provider]?.[model]) || 0);
+      const displayModel = providerModelDisplayName(provider, model);
       values[key] = tokens;
       costs[key] = cost;
       metadata[key] = {
         provider,
         model,
-        name: `${providerDisplayName(provider)} / ${model}`,
+        name: `${providerDisplayName(provider)} / ${displayModel}`,
         cacheReadTokens: Number(period?.providerModelCacheReads?.[provider]?.[model]) || 0,
         cacheWriteTokens: Number(period?.providerModelCacheWrites?.[provider]?.[model]) || 0,
         outputTokens: Number(period?.providerModelOutputs?.[provider]?.[model]) || 0,

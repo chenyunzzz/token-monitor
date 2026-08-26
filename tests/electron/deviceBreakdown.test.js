@@ -60,6 +60,18 @@ test('deviceBreakdownForPeriod tolerates shared models and legacy device records
   });
 });
 
+test('deviceBreakdownForPeriod labels legacy Antigravity unknown models clearly', () => {
+  const result = deviceBreakdownForPeriod({ periods: { today: {
+    totalTokens: 7,
+    clients: { antigravity: 7 },
+    clientProviderModels: { antigravity: { antigravity: { unknown: 7 } } }
+  } } }, 'today');
+
+  assert.deepEqual(result.tools[0].models, [
+    { key: 'provider:antigravity/unknown', name: 'antigravity / auto-detected', value: 7 }
+  ]);
+});
+
 test('devicePlatformLabel appends OS versions without exposing architecture', () => {
   assert.equal(devicePlatformLabel('darwin-arm64', 'macOS', '26.0'), 'macOS 26.0');
   assert.equal(devicePlatformLabel('win32-x64', 'Windows 11', '24H2'), 'Windows 11 24H2');

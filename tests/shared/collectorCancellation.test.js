@@ -225,8 +225,8 @@ test('usage replacement abandons its wait for a shared capability probe without 
     }
     const clientIndex = args.indexOf('--client');
     const requested = clientIndex === -1 ? '' : args[clientIndex + 1];
-    if (requested.split(',').includes('dsh')) {
-      return closingChild(2, '', "error: invalid value 'dsh' for --client");
+    if (requested.split(',').includes('unsupported')) {
+      return closingChild(2, '', "error: invalid value 'unsupported' for --client");
     }
     return closingChild(0, JSON.stringify({ entries: [] }));
   };
@@ -236,7 +236,7 @@ test('usage replacement abandons its wait for a shared capability probe without 
   try {
     const fresh = require(collectorPath);
     const usageOptions = {
-      clients: 'claude,dsh',
+      clients: 'claude,unsupported',
       allTimeSince: '2024-01-01',
       commandTimeoutMs: 5000,
       deviceId: 'shared-capability-probe-barrier-test',
@@ -270,7 +270,7 @@ test('usage replacement abandons its wait for a shared capability probe without 
 
     const callsBeforeCacheCheck = calls.length;
     await fresh.collectUsageOnce({
-      clients: 'claude,dsh',
+      clients: 'claude,unsupported',
       allTimeSince: '2024-01-01',
       commandTimeoutMs: 5000,
       deviceId: 'shared-capability-probe-cache-test',
