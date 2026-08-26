@@ -118,6 +118,16 @@ Example payload:
         "gpt-5": 0.01
       }
     },
+    "providerModels": {
+      "openai": {
+        "gpt-5": 1234
+      }
+    },
+    "providerModelCosts": {
+      "openai": {
+        "gpt-5": 0.01
+      }
+    },
     "sessions": {
       "codex:rollout-2026-05-30T11-44-50-abc": {
         "client": "codex",
@@ -207,6 +217,8 @@ The hub normalizes records before storing them. The Node hub accepts JSON ingest
 Authenticated stats expose `projectsIncomplete: true` when a device omitted its rollup, disabled project tracking while contributing usage, or could not preserve exact all-time attribution after its tracked-client list changed. Affected device entries expose `allTimeProjectsOmitted`, `allTimeProjectsIncomplete`, or `projectsEnabled: false` as the reason. The public Worker stats endpoint removes the entire `projects` map, including both display labels and canonical keys.
 
 `timedTokens`, `timedOutputTokens` and `timedDurationMs` are optional throughput inputs, summed from tokscale's per-entry `performance` block. `timedDurationMs` is the sum of per-message durations, not a wall-clock span — concurrent sessions contribute their durations separately — and `timedTokens` counts the tokens of the messages that carried a duration. Coverage is only meaningful per tokscale entry and must **not** be reconstructed as `timedTokens / totalTokens` after aggregation: that ratio mixes clients with completely different coverage, and it is not even bounded by 1, because tokscale counts reasoning in its own token total while `totalTokens` deliberately does not.
+
+`providerModels` and `providerModelCosts` are optional nested maps keyed by the upstream provider id and then the model id. They supplement the legacy model maps, which intentionally remain model-only for compatibility. This lets identical model ids from different routes (for example `ollama/deepseek-v4-flash` and `opencode-go/deepseek-v4-flash`) remain separate in the dashboard. Component maps may also be sent as `providerModelCacheReads`, `providerModelCacheWrites`, `providerModelOutputs`, and `providerModelUnclassifiedTokens` with the same nesting. A missing provider is retained in the legacy model row rather than guessed.
 
 `timedOutputTokens` is the output of the entries that carried a duration — an entry contributes its output exactly when it contributes its duration, so `timedOutputTokens / timedDurationMs` always divides two totals describing the same entries. The gate is applied per entry rather than rebuilt from period totals: several tracked clients report no durations at all, so anything derived from summed totals lets one client's output ride on another client's clock, and the resulting rate drifts with the client mix rather than with throughput.
 

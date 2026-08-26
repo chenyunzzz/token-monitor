@@ -96,7 +96,7 @@ test('Tool and Model breakdowns consume the shared token-or-cost rows', () => {
   const app = fs.readFileSync(path.join(rendererDir, 'app.js'), 'utf8');
   assert.ok(index.indexOf('usageAttributionRows.js') < index.indexOf('app.js'));
   assert.match(app, /periodAttributionRows\(period, period\?\.clients, period\?\.clientCosts\)/);
-  assert.match(app, /periodAttributionRows\(period, period\?\.models, period\?\.modelCosts\)/);
+  assert.match(app, /modelAttributionRows\(period\)/);
   assert.match(app, /visibleAttributionRows\(rows, formatCost\)/);
   assert.match(app, /attributionValue\(/);
 });

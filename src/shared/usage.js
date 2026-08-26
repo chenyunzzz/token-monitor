@@ -162,6 +162,12 @@ function emptyPeriod() {
     modelUnclassifiedTokens: {},
     clientModels: {},
     clientModelCosts: {},
+    providerModels: {},
+    providerModelCosts: {},
+    providerModelCacheReads: {},
+    providerModelCacheWrites: {},
+    providerModelOutputs: {},
+    providerModelUnclassifiedTokens: {},
     projects: Object.create(null),
     sessions: {}
   };
@@ -224,6 +230,21 @@ function normalizeSessionId(value) {
 function normalizeProviderName(value) {
   const raw = String(value || '').trim().toLowerCase();
   return raw.replace(/[^a-z0-9_-]+/g, '-') || null;
+}
+
+function nestedModelValue(value, keys) {
+  if (!value || typeof value !== 'object') return '';
+  return firstString(value, keys);
+}
+
+function nestedProviderValue(value) {
+  if (value === null || value === undefined || typeof value === 'boolean') return '';
+  if (typeof value !== 'object') return String(value).trim();
+  return firstString(value, ['provider', 'providerId', 'provider_id', 'providerID', 'id', 'name']);
+}
+
+function modelObject(obj) {
+  return obj?.model && typeof obj.model === 'object' ? obj.model : null;
 }
 
 function hasOwn(object, key) {
@@ -368,9 +389,36 @@ function normalizePeriodWindows(value) {
 
 function detectModel(obj, client = detectClient(obj)) {
   if (!obj || typeof obj !== 'object') return null;
+  const model = modelObject(obj);
   return normalizeModelNameForClient(
-    obj.model || obj.modelName || obj.model_name || obj.deployment || obj.engine,
+    obj.modelId
+      || obj.model_id
+      || obj.modelID
+      || obj.modelName
+      || obj.model_name
+      || obj.deployment
+      || obj.engine
+      || nestedModelValue(model, ['modelId', 'model_id', 'modelID', 'id', 'name', 'model'])
+      || (typeof obj.model === 'object' ? '' : obj.model),
     client
+  );
+}
+
+function detectProvider(obj) {
+  if (!obj || typeof obj !== 'object') return null;
+  const model = modelObject(obj);
+  return normalizeProviderName(
+    nestedProviderValue(obj.provider)
+      || nestedProviderValue(obj.providerId)
+      || nestedProviderValue(obj.provider_id)
+      || nestedProviderValue(obj.providerID)
+      || nestedProviderValue(obj.modelProvider)
+      || nestedProviderValue(obj.model_provider)
+      || nestedProviderValue(model?.provider)
+      || nestedProviderValue(model?.providerId)
+      || nestedProviderValue(model?.provider_id)
+      || nestedProviderValue(model?.providerID)
+      || nestedProviderValue(obj.source && typeof obj.source === 'object' ? obj.source.provider : '')
   );
 }
 
@@ -685,6 +733,27 @@ function normalizePeriod(input, options = {}) {
       }
     }
   }
+  for (const [field, cost] of [
+    ['providerModels', false],
+    ['providerModelCosts', true],
+    ['providerModelCacheReads', false],
+    ['providerModelCacheWrites', false],
+    ['providerModelOutputs', false],
+    ['providerModelUnclassifiedTokens', false]
+  ]) {
+    if (!input[field] || typeof input[field] !== 'object') continue;
+    for (const [provider, models] of Object.entries(input[field])) {
+      const providerKey = normalizeProviderName(provider);
+      if (!providerKey || !models || typeof models !== 'object') continue;
+      for (const [model, value] of Object.entries(models)) {
+        const modelKey = normalizeModelName(model);
+        if (!modelKey) continue;
+        if (!period[field][providerKey]) period[field][providerKey] = {};
+        period[field][providerKey][modelKey] = (period[field][providerKey][modelKey] || 0)
+          + (cost ? asNumber(value) : Math.max(0, Math.round(asNumber(value))));
+      }
+    }
+  }
   if (input.sessions && typeof input.sessions === 'object') {
     for (const [key, value] of Object.entries(input.sessions)) {
       const session = normalizeSession(value, key);
@@ -728,6 +797,7 @@ function addUsageRowToPeriod(period, row, detectedClient = detectClient(row)) {
   const timedOutputTokens = timedDurationMs > 0 ? output : 0;
   let model = detectModel(row, client);
   if (client === 'cursor' && model === 'auto') model = 'cursor-auto';
+  const provider = detectProvider(row);
   period.totalTokens += Math.max(0, Math.round(tokens));
   period.costUsd += cost;
   period.cacheReadTokens += cacheRead;
@@ -757,6 +827,26 @@ function addUsageRowToPeriod(period, row, detectedClient = detectClient(row)) {
   if (client && model && cost > 0) {
     if (!period.clientModelCosts[client]) period.clientModelCosts[client] = {};
     period.clientModelCosts[client][model] = (period.clientModelCosts[client][model] || 0) + cost;
+  }
+  if (provider && model && tokens > 0) {
+    if (!period.providerModels[provider]) period.providerModels[provider] = {};
+    period.providerModels[provider][model] = (period.providerModels[provider][model] || 0) + Math.round(tokens);
+    if (cacheRead > 0) {
+      if (!period.providerModelCacheReads[provider]) period.providerModelCacheReads[provider] = {};
+      period.providerModelCacheReads[provider][model] = (period.providerModelCacheReads[provider][model] || 0) + cacheRead;
+    }
+    if (cacheWrite > 0) {
+      if (!period.providerModelCacheWrites[provider]) period.providerModelCacheWrites[provider] = {};
+      period.providerModelCacheWrites[provider][model] = (period.providerModelCacheWrites[provider][model] || 0) + cacheWrite;
+    }
+    if (output > 0) {
+      if (!period.providerModelOutputs[provider]) period.providerModelOutputs[provider] = {};
+      period.providerModelOutputs[provider][model] = (period.providerModelOutputs[provider][model] || 0) + output;
+    }
+  }
+  if (provider && model && cost > 0) {
+    if (!period.providerModelCosts[provider]) period.providerModelCosts[provider] = {};
+    period.providerModelCosts[provider][model] = (period.providerModelCosts[provider][model] || 0) + cost;
   }
   const session = sessionFromRow(row);
   if (session) addSession(period, session);
@@ -1257,6 +1347,21 @@ function addPeriodInto(target, source) {
       target.clientModelCosts[client][model] = (target.clientModelCosts[client][model] || 0) + cost;
     }
   }
+  for (const field of [
+    'providerModels',
+    'providerModelCosts',
+    'providerModelCacheReads',
+    'providerModelCacheWrites',
+    'providerModelOutputs',
+    'providerModelUnclassifiedTokens'
+  ]) {
+    for (const [provider, models] of Object.entries(source[field] || {})) {
+      if (!target[field][provider]) target[field][provider] = {};
+      for (const [model, value] of Object.entries(models || {})) {
+        target[field][provider][model] = (target[field][provider][model] || 0) + value;
+      }
+    }
+  }
   for (const [key, project] of Object.entries(source.projects || {})) addProjectInto(target.projects, key, project);
   for (const session of Object.values(source.sessions)) addSession(target, session);
   return target;
@@ -1454,6 +1559,8 @@ module.exports = {
   mergeDeviceRecord,
   mergePeriods,
   normalizeClientName,
+  detectModel,
+  detectProvider,
   normalizeModelName,
   normalizeModelNameForClient,
   normalizeDeviceRecord,

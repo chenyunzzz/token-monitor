@@ -2126,18 +2126,81 @@ function toolRowsForPeriod(period) {
   return deviceRowsForPeriod();
 }
 
+function providerDisplayName(provider) {
+  const names = {
+    ollama: 'Ollama',
+    'opencode-go': 'OpenCode Go',
+    opencode: 'OpenCode',
+    'openai-compatible': 'OpenAI Compatible'
+  };
+  return names[provider] || provider;
+}
+
+function modelAttributionRows(period) {
+  const values = {};
+  const costs = {};
+  const metadata = {};
+  const providerModels = period?.providerModels && typeof period.providerModels === 'object'
+    ? period.providerModels
+    : {};
+  const providerTokenTotals = {};
+  const providerCostTotals = {};
+  for (const [provider, models] of Object.entries(providerModels)) {
+    for (const [model, value] of Object.entries(models || {})) {
+      const key = `provider:${provider}/${model}`;
+      const tokens = Math.max(0, Number(value) || 0);
+      const cost = Math.max(0, Number(period?.providerModelCosts?.[provider]?.[model]) || 0);
+      values[key] = tokens;
+      costs[key] = cost;
+      metadata[key] = {
+        provider,
+        model,
+        name: `${providerDisplayName(provider)} / ${model}`,
+        cacheReadTokens: Number(period?.providerModelCacheReads?.[provider]?.[model]) || 0,
+        cacheWriteTokens: Number(period?.providerModelCacheWrites?.[provider]?.[model]) || 0,
+        outputTokens: Number(period?.providerModelOutputs?.[provider]?.[model]) || 0,
+        unclassifiedTokens: Number(period?.providerModelUnclassifiedTokens?.[provider]?.[model]) || 0
+      };
+      providerTokenTotals[model] = (providerTokenTotals[model] || 0) + tokens;
+      providerCostTotals[model] = (providerCostTotals[model] || 0) + cost;
+    }
+  }
+  for (const [model, total] of Object.entries(period?.models || {})) {
+    const tokens = Math.max(0, (Number(total) || 0) - (providerTokenTotals[model] || 0));
+    const cost = Math.max(0, (Number(period?.modelCosts?.[model]) || 0) - (providerCostTotals[model] || 0));
+    if (tokens <= 0 && cost <= 0) continue;
+    values[model] = tokens;
+    costs[model] = cost;
+    metadata[model] = {
+      model,
+      name: model,
+      cacheReadTokens: Math.max(0, (Number(period?.modelCacheReads?.[model]) || 0)
+        - Object.entries(providerModels).reduce((sum, [provider]) => sum + (Number(period?.providerModelCacheReads?.[provider]?.[model]) || 0), 0)),
+      cacheWriteTokens: Math.max(0, (Number(period?.modelCacheWrites?.[model]) || 0)
+        - Object.entries(providerModels).reduce((sum, [provider]) => sum + (Number(period?.providerModelCacheWrites?.[provider]?.[model]) || 0), 0)),
+      outputTokens: Math.max(0, (Number(period?.modelOutputs?.[model]) || 0)
+        - Object.entries(providerModels).reduce((sum, [provider]) => sum + (Number(period?.providerModelOutputs?.[provider]?.[model]) || 0), 0)),
+      unclassifiedTokens: Math.max(0, (Number(period?.modelUnclassifiedTokens?.[model]) || 0)
+        - Object.entries(providerModels).reduce((sum, [provider]) => sum + (Number(period?.providerModelUnclassifiedTokens?.[provider]?.[model]) || 0), 0))
+    };
+  }
+  return periodAttributionRows(period, values, costs).map((row) => ({ ...row, ...(metadata[row.key] || {}) }));
+}
+
 function modelRowsForPeriod(period) {
-  const modelRows = periodAttributionRows(period, period?.models, period?.modelCosts).map(({ key: model, value, cost }) => ({
-    key: model,
-    name: model === usageAttributionRowsApi.UNATTRIBUTED_KEY ? t('dashboard.tooltip.unclassified') : model,
+  const modelRows = modelAttributionRows(period).map(({ key: modelKey, model, name, value, cost, provider, cacheReadTokens, cacheWriteTokens, outputTokens, unclassifiedTokens }) => ({
+    key: modelKey,
+    name: modelKey === usageAttributionRowsApi.UNATTRIBUTED_KEY
+      ? t('dashboard.tooltip.unclassified')
+      : name || model || modelKey,
     value,
     cost,
-    color: modelColor(model),
+    color: modelColor(model || modelKey),
     stale: false,
-    cacheReadTokens: attributionComponent(period, 'modelCacheReads', model),
-    cacheWriteTokens: attributionComponent(period, 'modelCacheWrites', model),
-    outputTokens: attributionComponent(period, 'modelOutputs', model),
-    unclassifiedTokens: attributionComponent(period, 'modelUnclassifiedTokens', model)
+    cacheReadTokens: provider ? cacheReadTokens : attributionComponent(period, 'modelCacheReads', modelKey),
+    cacheWriteTokens: provider ? cacheWriteTokens : attributionComponent(period, 'modelCacheWrites', modelKey),
+    outputTokens: provider ? outputTokens : attributionComponent(period, 'modelOutputs', modelKey),
+    unclassifiedTokens: provider ? unclassifiedTokens : attributionComponent(period, 'modelUnclassifiedTokens', modelKey)
   }));
   if (modelRows.length > 0) return modelRows.sort((a, b) => b.value - a.value);
   if (Number(period?.totalTokens || 0) === 0) return [];

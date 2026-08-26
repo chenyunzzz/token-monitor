@@ -10,6 +10,8 @@ const {
   mergeDeviceRecord,
   mergePeriods,
   normalizeClientName,
+  detectModel,
+  detectProvider,
   UNATTRIBUTED_USAGE_CLIENT
 } = require('../../src/shared/usage');
 
@@ -850,6 +852,41 @@ test('extractUsageFromTokscale keeps model usage grouped by client', () => {
   assert.equal(period.clientModels.hermes['claude-3-5-sonnet'], 100);
   assert.equal(period.clientModelCosts.hermes['claude-3-5-sonnet'], 1.25);
   assert.equal(period.clientModels.codex['gpt-5'], 50);
+});
+
+test('extractUsageFromTokscale keeps identical models separate by provider', () => {
+  const period = extractUsageFromTokscale({
+    entries: [
+      { client: 'OpenCode', provider: 'ollama', model: 'deepseek-v4-flash', totalTokens: 10, costUsd: 0.01 },
+      { client: 'OpenCode', model: { providerID: 'opencode-go', modelID: 'deepseek-v4-flash' }, totalTokens: 20, costUsd: 0.02 },
+      { client: 'Reasonix', providerId: 'deepseek', model: 'deepseek-v4-flash:latest', totalTokens: 30, costUsd: 0.03 }
+    ]
+  });
+
+  assert.deepEqual(period.providerModels, {
+    ollama: { 'deepseek-v4-flash': 10 },
+    'opencode-go': { 'deepseek-v4-flash': 20 },
+    deepseek: { 'deepseek-v4-flash:latest': 30 }
+  });
+  assert.deepEqual(period.providerModelCosts, {
+    ollama: { 'deepseek-v4-flash': 0.01 },
+    'opencode-go': { 'deepseek-v4-flash': 0.02 },
+    deepseek: { 'deepseek-v4-flash:latest': 0.03 }
+  });
+  assert.equal(period.models['deepseek-v4-flash'], 30);
+  assert.equal(period.models['deepseek-v4-flash:latest'], 30);
+});
+
+test('detectModel and detectProvider read nested metadata without stringifying objects', () => {
+  const row = {
+    client: 'OpenCode',
+    provider: { name: 'OpenCode Go' },
+    model: { modelID: 'deepseek-v4-flash', providerID: 'opencode-go' }
+  };
+
+  assert.equal(detectModel(row), 'deepseek-v4-flash');
+  assert.equal(detectProvider(row), 'opencode-go');
+  assert.notEqual(detectModel({ model: { providerID: 'opencode-go' } }), '[object object]');
 });
 
 test('extractUsageBundleFromTokscale partitions every aggregate field exactly by client', () => {
