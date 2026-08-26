@@ -25,6 +25,7 @@ const {
   extractUsageBundleFromTokscale,
   extractUsageFromTokscale,
   mergePeriods,
+  normalizeProviderHints,
   normalizeClientName,
   UNATTRIBUTED_USAGE_CLIENT
 } = require('./usage');
@@ -1462,6 +1463,7 @@ async function collectUsageOnce(options) {
     ? hostOsInfo()
     : normalizeOsInfo(options.osInfo);
   const normalizedClients = normalizeClientsCsv(clients);
+  const providerHints = normalizeProviderHints(options.providerHints);
   const projectsEnabled = options.projectsEnabled !== false;
   const localSessionMetadataDeps = {
     ...(options.sessionMetadataDeps || {}),
@@ -1551,9 +1553,9 @@ async function collectUsageOnce(options) {
         });
         const promaJson = buildPromaPeriods({ now: collectedAt, allTimeSince, rows: promaRows, pricingByModel: promaPricing });
         promaPeriods = {
-          today: extractUsageFromTokscale(promaJson.today),
-          month: extractUsageFromTokscale(promaJson.month),
-          allTime: extractUsageFromTokscale(promaJson.allTime)
+          today: extractUsageFromTokscale(promaJson.today, { providerHints }),
+          month: extractUsageFromTokscale(promaJson.month, { providerHints }),
+          allTime: extractUsageFromTokscale(promaJson.allTime, { providerHints })
         };
       } catch (err) {
         if (typeof options.logger === 'function') options.logger(`proma parse failed: ${err.message}`);
@@ -1570,9 +1572,9 @@ async function collectUsageOnce(options) {
         });
         const qoderCnJson = buildQoderCnPeriods({ now: collectedAt, allTimeSince, rows: qoderCnRows, pricingByModel: qoderCnPricing });
         qoderCnPeriods = {
-          today: extractUsageFromTokscale(qoderCnJson.today),
-          month: extractUsageFromTokscale(qoderCnJson.month),
-          allTime: extractUsageFromTokscale(qoderCnJson.allTime)
+          today: extractUsageFromTokscale(qoderCnJson.today, { providerHints }),
+          month: extractUsageFromTokscale(qoderCnJson.month, { providerHints }),
+          allTime: extractUsageFromTokscale(qoderCnJson.allTime, { providerHints })
         };
       } catch (err) {
         if (typeof options.logger === 'function') options.logger(`qodercn parse failed: ${err.message}`);
@@ -1595,7 +1597,7 @@ async function collectUsageOnce(options) {
       if (scanClients) {
         const todayJson = await runTokscaleFn({ clients: scanClients, flags: ['--today'], commandTimeoutMs, signal: options.signal });
         throwIfAborted(options.signal);
-        const bundle = extractUsageBundleFromTokscale(todayJson);
+        const bundle = extractUsageBundleFromTokscale(todayJson, { providerHints });
         freshPartitions = bundle.byClient;
         const unattributed = freshPartitions[UNATTRIBUTED_USAGE_CLIENT];
         const attributedClients = Object.keys(freshPartitions).filter((client) => client !== UNATTRIBUTED_USAGE_CLIENT);
@@ -1620,7 +1622,7 @@ async function collectUsageOnce(options) {
           // anchor partition. Rebuild the complete today snapshot instead.
           const fullTodayJson = await runTokscaleFn({ clients: tokscaleClients, flags: ['--today'], commandTimeoutMs, signal: options.signal });
           throwIfAborted(options.signal);
-          freshPartitions = extractUsageBundleFromTokscale(fullTodayJson).byClient;
+          freshPartitions = extractUsageBundleFromTokscale(fullTodayJson, { providerHints }).byClient;
           useTargetedPartitions = false;
         } else if (targetRequested) {
           // Empty tokscale output uses the unattributed fallback shape. Keep the
@@ -1660,19 +1662,19 @@ async function collectUsageOnce(options) {
       // is what let the issue #15 self-trigger loop spike tokscale past 500% CPU.
       const todayJson = await runTokscaleFn({ clients: tokscaleClients, flags: ['--today'], commandTimeoutMs, signal: options.signal });
       throwIfAborted(options.signal);
-      const todayBundle = extractUsageBundleFromTokscale(todayJson);
+      const todayBundle = extractUsageBundleFromTokscale(todayJson, { providerHints });
       today = todayBundle.period;
       todayPartitions = todayBundle.byClient;
       if (typeof options.onProgress === 'function') decorateLocalPeriods({ today });
       emitProgress({ today });
       const monthJson = await runTokscaleFn({ clients: tokscaleClients, flags: ['--month'], commandTimeoutMs, signal: options.signal });
       throwIfAborted(options.signal);
-      month = extractUsageFromTokscale(monthJson);
+      month = extractUsageFromTokscale(monthJson, { providerHints });
       if (typeof options.onProgress === 'function') decorateLocalPeriods({ today, month });
       emitProgress({ today, month });
       const allTimeJson = await runTokscaleFn({ clients: tokscaleClients, flags: ['--since', allTimeSince], commandTimeoutMs, signal: options.signal });
       throwIfAborted(options.signal);
-      allTime = extractUsageFromTokscale(allTimeJson);
+      allTime = extractUsageFromTokscale(allTimeJson, { providerHints });
     }
     // Always decorate: session timestamps drive the recency sort regardless of the
     // Projects opt-out (issue #182). decorateLocalPeriods gates only project identity
@@ -1722,11 +1724,26 @@ async function collectUsageOnce(options) {
   const windowsPeriods = { today, month, allTime };
   let wslBundle = emptyWslBundle();
   let wslDetected = [];
+  let wslScanFailure = '';
+  const previousWslBundle = options.previousWslBundle || options.wslAnchor;
+  const adoptWslResult = (result) => {
+    wslDetected = result.detected || [];
+    wslScanFailure = result.lastError || '';
+    // A transient SQLite/9P or WSL runtime failure must not publish an empty
+    // replacement for a previously valid snapshot. Only reuse the old bundle
+    // when every attempted home failed; merging it with a partial fresh bundle
+    // would double-count homes that did succeed.
+    if (result.failedHomes > 0 && result.successfulHomes === 0 && previousWslBundle) {
+      return previousWslBundle;
+    }
+    return result.bundle;
+  };
   if (normalizedClients && options.wslScanEnabled !== false) {
     if (options.refreshWsl) {
       const wslResult = await collectWsl({
         clients: tokscaleClients,
         trackedClients: normalizedClients,
+        providerHints,
         allTimeSince,
         now: collectedAt,
         commandTimeoutMs,
@@ -1740,14 +1757,14 @@ async function collectUsageOnce(options) {
         logger: options.logger,
         decoratePeriods: (periods, home) => applySessionTimestamps(periods, home, { scopedHome: true, resolveProjects: projectsEnabled })
       });
-      wslBundle = wslResult.bundle;
-      wslDetected = wslResult.detected;
+      wslBundle = adoptWslResult(wslResult);
     } else if (options.wslAnchor) {
       wslBundle = options.wslAnchor;
     } else if (!anchorUsed) {
       const wslResult = await collectWsl({
         clients: tokscaleClients,
         trackedClients: normalizedClients,
+        providerHints,
         allTimeSince,
         now: collectedAt,
         commandTimeoutMs,
@@ -1761,8 +1778,7 @@ async function collectUsageOnce(options) {
         logger: options.logger,
         decoratePeriods: (periods, home) => applySessionTimestamps(periods, home, { scopedHome: true, resolveProjects: projectsEnabled })
       });
-      wslBundle = wslResult.bundle;
-      wslDetected = wslResult.detected;
+      wslBundle = adoptWslResult(wslResult);
     }
   }
   today = mergePeriods(windowsPeriods.today, wslBundle.today);
@@ -1814,7 +1830,12 @@ async function collectUsageOnce(options) {
       } else {
         const withData = Object.keys(wslBundle.allTime.clients || {});
         const state = withData.length > 0 ? 'active' : 'no-data';
-        wslStatus = { state, detected: wslDetected, withData };
+        wslStatus = {
+          state,
+          detected: wslDetected,
+          withData,
+          ...(wslScanFailure ? { lastError: wslScanFailure } : {})
+        };
       }
     }
   }
@@ -3548,6 +3569,7 @@ function startCollector(options) {
         targetClients: anchored && targetAnchorReady ? requestedTargetClients : [],
         todayOnlyAnchor: anchored ? anchor : null,
         wslAnchor: anchored ? wslAnchor : null,
+        previousWslBundle: wslAnchor,
         wslStatus: anchored ? wslStatusAnchor : null,
         lastActivityDays: activityDaysAnchor,
         refreshWsl: anchored ? refreshWsl : false,

@@ -129,6 +129,37 @@ test('interval anchored tick with refreshWsl rescans WSL and updates anchor', as
   assert.equal(wslCalls, 0, 'watch tick must reuse wslAnchor, not rescan');
 });
 
+test('all WSL homes failing preserves the previous bundle and reports the scan error', async () => {
+  const previous = bundleWith(9);
+  const summary = await collectUsageOnce({
+    clients: 'claude,gemini',
+    allTimeSince: '2025-01-01',
+    commandTimeoutMs: 1000,
+    deviceId: 'dev1',
+    limitsEnabled: false,
+    platform: 'win32',
+    runTokscale: windowsTokscale,
+    previousWslBundle: previous,
+    collectWslUsage: async () => ({
+      bundle: { today: emptyPeriod(), month: emptyPeriod(), allTime: emptyPeriod() },
+      detected: ['gemini'],
+      attemptedHomes: 1,
+      successfulHomes: 0,
+      failedHomes: 1,
+      lastError: 'database is locked'
+    }),
+    probeWslState: () => 'ok'
+  });
+
+  assert.equal(summary.today.clients.gemini, 9);
+  assert.deepEqual(summary.wslStatus, {
+    state: 'active',
+    detected: ['gemini'],
+    withData: ['gemini'],
+    lastError: 'database is locked'
+  });
+});
+
 test('wslScanEnabled:false skips the WSL scan entirely', async () => {
   let wslCalls = 0;
   const summary = await collectUsageOnce({

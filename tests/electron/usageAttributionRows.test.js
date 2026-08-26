@@ -11,6 +11,7 @@ const {
   attributionValue,
   UNATTRIBUTED_KEY
 } = require('../../src/electron/renderer/usageAttributionRows');
+const deviceBreakdown = require('../../src/electron/renderer/deviceBreakdown');
 
 const rendererDir = path.join(__dirname, '..', '..', 'src', 'electron', 'renderer');
 
@@ -99,4 +100,28 @@ test('Tool and Model breakdowns consume the shared token-or-cost rows', () => {
   assert.match(app, /modelAttributionRows\(period\)/);
   assert.match(app, /visibleAttributionRows\(rows, formatCost\)/);
   assert.match(app, /attributionValue\(/);
+});
+
+test('device details keep identical models separate by provider and preserve unknown residuals', () => {
+  const result = deviceBreakdown.deviceBreakdownForPeriod({
+    periods: {
+      today: {
+        totalTokens: 100,
+        clients: { dsh: 100 },
+        clientModels: { dsh: { 'deepseek-v4-flash': 90 } },
+        clientProviderModels: {
+          dsh: {
+            ollama: { 'deepseek-v4-flash': 60 },
+            'opencode-go': { 'deepseek-v4-flash': 30 }
+          }
+        }
+      }
+    }
+  }, 'today', { unattributedLabel: 'Unclassified' });
+
+  assert.deepEqual(result.tools[0].models, [
+    { key: 'provider:ollama/deepseek-v4-flash', name: 'Ollama / deepseek-v4-flash', value: 60 },
+    { key: 'provider:opencode-go/deepseek-v4-flash', name: 'OpenCode Go / deepseek-v4-flash', value: 30 },
+    { key: '__unattributed:dsh', name: 'Unclassified', value: 10 }
+  ]);
 });

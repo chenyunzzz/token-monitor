@@ -13,6 +13,51 @@
       .filter(([, amount]) => amount > 0);
   }
 
+  function providerLabel(provider) {
+    const labels = {
+      'cli-proxy-api': 'CLIProxyAPI',
+      cliproxyapi: 'CLIProxyAPI',
+      'openai-compatible': 'OpenAI Compatible',
+      'opencode-go': 'OpenCode Go',
+      openrouter: 'OpenRouter',
+      ollama: 'Ollama',
+      sub2api: 'Sub2API'
+    };
+    return labels[provider] || provider;
+  }
+
+  function modelsForClient(period, client, clientValue, unclassifiedLabel) {
+    const legacyModels = positiveEntries(period.clientModels?.[client]);
+    const legacyTotals = new Map(legacyModels);
+    const providerRows = [];
+    const accountedByModel = new Map();
+    const providers = period.clientProviderModels?.[client] || {};
+    for (const [provider, models] of Object.entries(providers)) {
+      for (const [model, rawValue] of positiveEntries(models)) {
+        const budget = legacyTotals.has(model)
+          ? Math.max(0, (legacyTotals.get(model) || 0) - (accountedByModel.get(model) || 0))
+          : Math.max(0, clientValue - providerRows.reduce((sum, row) => sum + row.value, 0));
+        const value = Math.min(rawValue, budget);
+        if (value <= 0) continue;
+        accountedByModel.set(model, (accountedByModel.get(model) || 0) + value);
+        providerRows.push({
+          key: `provider:${provider}/${model}`,
+          name: `${providerLabel(provider)} / ${model}`,
+          value
+        });
+      }
+    }
+    const rows = [...providerRows];
+    for (const [model, value] of legacyModels) {
+      const residual = Math.max(0, value - (accountedByModel.get(model) || 0));
+      if (residual > 0) rows.push({ key: model, name: model, value: residual });
+    }
+    const accounted = rows.reduce((sum, row) => sum + row.value, 0);
+    const unclassified = Math.max(0, clientValue - accounted);
+    if (unclassified > 0) rows.push({ key: `${UNATTRIBUTED_KEY}:${client}`, name: unclassifiedLabel || 'Unclassified', value: unclassified });
+    return rows.sort((a, b) => b.value - a.value || a.name.localeCompare(b.name));
+  }
+
   function deviceBreakdownForPeriod(device, periodName, options = {}) {
     const period = device?.periods?.[periodName] || {};
     const totalTokens = Math.max(0, Number(period.totalTokens || 0));
@@ -21,13 +66,9 @@
     const unattributedTokens = Math.max(0, totalTokens - attributedTokens);
     if (unattributedTokens > 0) clientEntries.push([UNATTRIBUTED_KEY, unattributedTokens]);
     const tools = clientEntries.map(([client, value]) => {
-      const models = positiveEntries(period.clientModels?.[client]).map(([model, modelValue]) => {
-        return {
-          key: model,
-          name: model,
-          value: modelValue
-        };
-      }).sort((a, b) => b.value - a.value || a.name.localeCompare(b.name));
+      const models = client === UNATTRIBUTED_KEY
+        ? []
+        : modelsForClient(period, client, value, options.unattributedLabel);
 
       return {
         key: client,

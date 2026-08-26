@@ -49,10 +49,14 @@ test('addPeriodInto accumulates provider model nesting', () => {
   const source = emptyPeriod();
   source.providerModels = { ollama: { 'deepseek-v4-flash': 7 } };
   source.providerModelCosts = { ollama: { 'deepseek-v4-flash': 0.7 } };
+  source.clientProviderModels = { dsh: { ollama: { 'deepseek-v4-flash': 7 } } };
+  source.clientProviderModelCosts = { dsh: { ollama: { 'deepseek-v4-flash': 0.7 } } };
   addPeriodInto(target, source);
   addPeriodInto(target, source);
   assert.deepEqual(target.providerModels, { ollama: { 'deepseek-v4-flash': 14 } });
   assert.deepEqual(target.providerModelCosts, { ollama: { 'deepseek-v4-flash': 1.4 } });
+  assert.deepEqual(target.clientProviderModels, { dsh: { ollama: { 'deepseek-v4-flash': 14 } } });
+  assert.deepEqual(target.clientProviderModelCosts, { dsh: { ollama: { 'deepseek-v4-flash': 1.4 } } });
 });
 
 test('mergePeriods propagates token-component provenance fail closed', () => {

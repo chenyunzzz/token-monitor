@@ -314,7 +314,7 @@ function normalizeInitialViewValue(value, allowed, fallback) {
   return allowed.has(raw) ? raw : fallback;
 }
 
-const state = { period: normalizeInitialViewValue(initialViewState.period, viewPeriodValues, 'today'), appUpdate: null, breakdown: normalizeInitialViewValue(initialViewState.breakdown, viewBreakdownValues, 'home'), viewSwitcherOpen: false, viewSwitcherHasOpened: false, limitDetailTooltipHasOpened: false, limitDetailTooltipActive: false, limitDetailTooltipRenderPending: false, settings: null, stats: null, homeHistory: null, homeHistoryBusy: false, homeHistoryRequested: false, homeHistorySignature: '', homeHistoryRetries: 0, homeHistoryRetryTimer: null, homeActivityScrollLeft: null, homeActivityFollowEnd: true, homeActivityResizeObserver: null, serviceStatus: null, serviceStatusBusy: false, serviceProvidersExpanded: false, trendSettingsExpanded: false, trendsActivating: false, homeSettingsExpanded: false, homeLimitSettingsExpanded: false, limitProviderSettingsExpanded: '', clientHealthExpanded: '', clientSources: clientSourceCacheApi.createClientSourceCache(), clientSourcesKey: '', clientSourcesRequest: 0, subscriptionEditingId: '', subscriptionTopUps: [], subscriptionFormBase: null, subscriptionEditorTransitionId: 0, serviceStatusTicker: null, refreshTimer: null, refreshBusy: false, refreshFeedbackTimer: null, currentTotal: 0, rowSignature: '', streamConnected: false, streamFailure: null, mode: 'idle', appInfo: null, systemDarkUi: false, tokscaleStatus: null, tokscaleCheck: null, tokscaleBusy: false, hubInfo: null, hubBuildStatus: null, cursorAccount: { status: null, error: '' }, cursorAccountExpanded: false, codexAccountExpanded: false, codexAccountError: '', codexSignInBusy: false, codexSignInFlowId: '', codexLoginUrl: '', codexLoginStatus: '', codexLoginOutput: '', codexWorkspaceChoices: [], codexWorkspaceId: '', codexActiveAccount: null, codexPendingActiveAccount: null, codexPendingActiveAccountUntil: 0, codexPendingActiveAccountTimer: null, codexSystemSwitchingAccountId: '', codexSystemSwitchErrorAccountId: '', codexSystemSwitchError: '', codexSwitchPopoverHasOpened: false, codexSwitchPopoverActive: false, codexSwitchPopoverRenderPending: false, customPricingExpanded: false, claudeAccountExpanded: false, claudePendingCheckSince: 0, opencodeProfileCount: 0, opencodeCookieExpanded: false, openrouterProfileCount: 0, openrouterAccountExpanded: false, thirdPartyProfileCount: 0, thirdPartyAccountExpanded: false, deepseekAccountExpanded: false, deepseekPendingCheckSince: 0, minimaxAccountExpanded: false, minimaxPendingCheckSince: 0, zaiAccountExpanded: false, zaiPendingCheckSince: 0, zaiteamAccountExpanded: false, zaiteamPendingCheckSince: 0, volcengineAccountExpanded: false, volcenginePendingCheckSince: 0, qoderAccountExpanded: false, qoderPendingCheckSince: 0, commandcodeAccountExpanded: false, commandcodePendingCheckSince: 0, kimiAccountExpanded: false, kimiPendingCheckSince: 0, ollamaAccountExpanded: false, ollamaPendingCheckSince: 0, mimoAccountExpanded: false, mimoAccountError: '', copilotAccountExpanded: false, copilotManualExpanded: false, copilotPendingCheckSince: 0, copilotSignInBusy: false, copilotSignInCancelable: false, copilotSignInFlowId: '', copilotAuthorizeMessage: '', copilotLoginStatus: '', copilotErrorMessage: '', floatingBubble: initialFloatingBubble, suppressInitialNumberAnimation: window.__TOKEN_MONITOR_SUPPRESS_INITIAL_NUMBER_ANIMATION__ === true, openSession: null, detailSort: 'time', recordingWindowShortcut: false, windowShortcutInvalid: false };
+const state = { period: normalizeInitialViewValue(initialViewState.period, viewPeriodValues, 'today'), appUpdate: null, breakdown: normalizeInitialViewValue(initialViewState.breakdown, viewBreakdownValues, 'home'), viewSwitcherOpen: false, viewSwitcherHasOpened: false, limitDetailTooltipHasOpened: false, limitDetailTooltipActive: false, limitDetailTooltipRenderPending: false, settings: null, stats: null, homeHistory: null, homeHistoryBusy: false, homeHistoryRequested: false, homeHistorySignature: '', homeHistoryRetries: 0, homeHistoryRetryTimer: null, homeActivityScrollLeft: null, homeActivityFollowEnd: true, homeActivityResizeObserver: null, serviceStatus: null, serviceStatusBusy: false, serviceProvidersExpanded: false, trendSettingsExpanded: false, trendsActivating: false, homeSettingsExpanded: false, homeLimitSettingsExpanded: false, limitProviderSettingsExpanded: '', clientHealthExpanded: '', clientSources: clientSourceCacheApi.createClientSourceCache(), clientSourcesKey: '', clientSourcesRequest: 0, subscriptionEditingId: '', subscriptionTopUps: [], subscriptionFormBase: null, subscriptionEditorTransitionId: 0, serviceStatusTicker: null, refreshTimer: null, refreshBusy: false, refreshFeedbackTimer: null, currentTotal: 0, rowSignature: '', streamConnected: false, streamFailure: null, mode: 'idle', appInfo: null, systemDarkUi: false, tokscaleStatus: null, tokscaleCheck: null, tokscaleBusy: false, hubInfo: null, hubBuildStatus: null, cursorAccount: { status: null, error: '' }, cursorAccountExpanded: false, codexAccountExpanded: false, codexAccountError: '', codexSignInBusy: false, codexSignInFlowId: '', codexLoginUrl: '', codexLoginStatus: '', codexLoginOutput: '', codexWorkspaceChoices: [], codexWorkspaceId: '', codexActiveAccount: null, codexPendingActiveAccount: null, codexPendingActiveAccountUntil: 0, codexPendingActiveAccountTimer: null, codexSystemSwitchingAccountId: '', codexSystemSwitchErrorAccountId: '', codexSwitchPopoverHasOpened: false, codexSwitchPopoverActive: false, codexSwitchPopoverRenderPending: false, customPricingExpanded: false, claudeAccountExpanded: false, claudePendingCheckSince: 0, opencodeProfileCount: 0, opencodeCookieExpanded: false, openrouterProfileCount: 0, openrouterAccountExpanded: false, thirdPartyProfileCount: 0, thirdPartyAccountExpanded: false, deepseekAccountExpanded: false, deepseekPendingCheckSince: 0, minimaxAccountExpanded: false, minimaxPendingCheckSince: 0, zaiAccountExpanded: false, zaiPendingCheckSince: 0, zaiteamAccountExpanded: false, zaiteamPendingCheckSince: 0, volcengineAccountExpanded: false, volcenginePendingCheckSince: 0, qoderAccountExpanded: false, qoderPendingCheckSince: 0, commandcodeAccountExpanded: false, commandcodePendingCheckSince: 0, kimiAccountExpanded: false, kimiPendingCheckSince: 0, ollamaAccountExpanded: false, ollamaPendingCheckSince: 0, mimoAccountExpanded: false, mimoAccountError: '', copilotAccountExpanded: false, copilotManualExpanded: false, copilotPendingCheckSince: 0, copilotSignInBusy: false, copilotSignInCancelable: false, copilotSignInFlowId: '', copilotAuthorizeMessage: '', copilotLoginStatus: '', copilotErrorMessage: '', floatingBubble: initialFloatingBubble, suppressInitialNumberAnimation: window.__TOKEN_MONITOR_SUPPRESS_INITIAL_NUMBER_ANIMATION__ === true, openSession: null, modelTreeCollapsed: new Set(), detailSort: 'time', recordingWindowShortcut: false, windowShortcutInvalid: false };
 state.clientRescans = clientRescanStateApi.createClientRescanState({
   onChange: (clientId) => {
     if (state.clientHealthExpanded === clientId) refillOpenClientHealthPanel();
@@ -2089,6 +2089,144 @@ function deviceRowsForPeriod() {
   }).sort((a, b) => b.value - a.value);
 }
 
+function modelTreeEnvironmentLabel(device) {
+  const platform = String(device?.platform || '').toLowerCase().split('-')[0];
+  if (platform === 'win32') return 'Windows';
+  if (platform === 'linux') return 'WSL';
+  return deviceBreakdownApi.devicePlatformLabel(device?.platform, device?.osName, device?.osVersion) || 'Device';
+}
+
+function modelTreeNodesForPeriod(period) {
+  const devices = fixedPeriodDevices()
+    .map((device) => ({ device, period: device.periods?.[state.period] || {} }))
+    .filter(({ period: source }) => Number(source.totalTokens || 0) > 0 || Number(source.costUsd || 0) > 0);
+  const sources = devices.length > 0
+    ? devices
+    : [{
+      device: {
+        deviceId: 'local',
+        platform: state.appInfo?.platform || '',
+        periods: { [state.period]: period }
+      },
+      period
+    }];
+  const environmentCounts = new Map();
+  for (const { device } of sources) {
+    const label = modelTreeEnvironmentLabel(device);
+    environmentCounts.set(label, (environmentCounts.get(label) || 0) + 1);
+  }
+  const nodes = [];
+  for (const { device } of sources) {
+    const environment = modelTreeEnvironmentLabel(device);
+    const rootKey = `environment:${device.deviceId}`;
+    const detail = deviceBreakdownApi.deviceBreakdownForPeriod(device, state.period, {
+      clientLabels,
+      clientColors,
+      fallbackColor: clientColors.default,
+      unattributedLabel: t('dashboard.tooltip.unclassified')
+    });
+    const rootName = environmentCounts.get(environment) > 1
+      ? `${environment} / ${deviceLabel(device)}`
+      : environment;
+    nodes.push({
+      key: rootKey,
+      collapseKey: rootKey,
+      level: 1,
+      name: rootName,
+      value: detail.totalTokens,
+      iconKey: device.platform,
+      iconBreakdown: 'device',
+      hasChildren: detail.tools.length > 0
+    });
+    if (state.modelTreeCollapsed.has(rootKey)) continue;
+    for (const tool of detail.tools) {
+      const toolKey = `${rootKey}/agent:${tool.client}`;
+      nodes.push({
+        key: toolKey,
+        collapseKey: toolKey,
+        level: 2,
+        name: tool.name,
+        value: tool.value,
+        iconKey: tool.client,
+        iconBreakdown: 'tool',
+        hasChildren: tool.models.length > 0
+      });
+      if (state.modelTreeCollapsed.has(toolKey)) continue;
+      for (const model of tool.models) {
+      nodes.push({
+        key: `${toolKey}/${model.key}`,
+        level: 3,
+        name: model.key.startsWith('model:')
+          ? `${t('dashboard.tooltip.unclassified')} / ${model.name}`
+          : model.name,
+          value: model.value,
+          iconKey: model.name,
+          iconBreakdown: 'model',
+          hasChildren: false
+        });
+      }
+    }
+  }
+  return nodes;
+}
+
+function renderModelTree(period) {
+  const nodes = modelTreeNodesForPeriod(period);
+  const total = Math.max(0, Number(period?.totalTokens || 0));
+  const tree = document.createElement('div');
+  tree.className = 'model-tree';
+  for (const node of nodes) {
+    const row = document.createElement('div');
+    row.className = `model-tree-row level-${node.level}`;
+    row.style.setProperty('--tree-level', String(node.level));
+    const left = document.createElement('div');
+    left.className = 'model-tree-name';
+    const disclosure = document.createElement('span');
+    disclosure.className = `model-tree-disclosure${node.hasChildren ? '' : ' placeholder'}`;
+    if (node.hasChildren) disclosure.classList.toggle('collapsed', state.modelTreeCollapsed.has(node.collapseKey));
+    left.append(disclosure);
+    const mark = document.createElement('span');
+    const icon = iconKindFor({ key: node.iconKey, platform: node.iconKey, client: node.iconKey }, node.iconBreakdown);
+    if (icon.kind === 'icon') {
+      mark.className = `model-tree-mark row-icon ${icon.iconClass}`;
+    } else {
+      mark.className = 'model-tree-mark dot';
+    }
+    left.append(mark);
+    const name = document.createElement('span');
+    name.className = 'model-tree-label';
+    name.textContent = node.name;
+    left.append(name);
+    const metrics = document.createElement('div');
+    metrics.className = 'model-tree-metrics';
+    const value = document.createElement('span');
+    value.textContent = formatCompact(node.value);
+    const share = document.createElement('span');
+    share.textContent = formatPercent(total > 0 ? node.value / total * 100 : 0);
+    metrics.append(value, share);
+    row.append(left, metrics);
+    if (node.hasChildren) {
+      row.tabIndex = 0;
+      row.setAttribute('role', 'button');
+      row.setAttribute('aria-expanded', String(!state.modelTreeCollapsed.has(node.collapseKey)));
+      const toggle = () => {
+        if (state.modelTreeCollapsed.has(node.collapseKey)) state.modelTreeCollapsed.delete(node.collapseKey);
+        else state.modelTreeCollapsed.add(node.collapseKey);
+        renderModelTree(period);
+      };
+      row.addEventListener('click', toggle);
+      row.addEventListener('keydown', (event) => {
+        if (event.key !== 'Enter' && event.key !== ' ') return;
+        event.preventDefault();
+        toggle();
+      });
+    }
+    tree.append(row);
+  }
+  els.breakdown.replaceChildren(tree);
+  state.rowSignature = '';
+}
+
 function attributionComponent(period, field, key) {
   const aggregateField = {
     clientCacheReads: 'cacheReadTokens',
@@ -2131,7 +2269,10 @@ function providerDisplayName(provider) {
     ollama: 'Ollama',
     'opencode-go': 'OpenCode Go',
     opencode: 'OpenCode',
-    'openai-compatible': 'OpenAI Compatible'
+    'openai-compatible': 'OpenAI Compatible',
+    'cli-proxy-api': 'CLIProxyAPI',
+    cliproxyapi: 'CLIProxyAPI',
+    sub2api: 'Sub2API'
   };
   return names[provider] || provider;
 }
@@ -7258,7 +7399,8 @@ function render() {
     } else if (state.breakdown === 'session' && sessionRowsApi.sessionBreakdownIncomplete(state.stats, state.period)) {
       incompleteHint = 'sessions.incomplete';
     }
-    renderRows(rows, { incompleteHint });
+    if (state.breakdown === 'model') renderModelTree(period);
+    else renderRows(rows, { incompleteHint });
   }
   
   renderFloatingBubbleContent();

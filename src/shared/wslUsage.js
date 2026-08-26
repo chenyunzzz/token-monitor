@@ -199,13 +199,17 @@ function probeWslState(deps = {}) {
 }
 
 async function collectWslUsage(options = {}, deps = {}) {
-  const { clients, trackedClients = clients, allTimeSince, commandTimeoutMs, now, runTokscale, logger, decoratePeriods } = options;
+  const { clients, trackedClients = clients, allTimeSince, commandTimeoutMs, now, runTokscale, logger, decoratePeriods, providerHints } = options;
   const buildProma = options.buildPromaPeriods || buildPromaPeriods;
   const collectProma = options.collectPromaRows || collectPromaRows;
   const existsSync = deps.existsSync || fs.existsSync;
   const readdirSync = deps.readdirSync || fs.readdirSync;
   const bundle = emptyWslBundle();
   const detected = new Set();
+  let attemptedHomes = 0;
+  let successfulHomes = 0;
+  let failedHomes = 0;
+  let lastError = '';
   throwIfAborted(options.signal, 'WSL usage scan aborted');
   if (!trackedClients) return { bundle, detected: [] };
   // Only attribute markers for clients the user is actually tracking — a marker
@@ -220,6 +224,7 @@ async function collectWslUsage(options = {}, deps = {}) {
     .join(',');
   for (const home of wslUsageHomes(deps)) {
     throwIfAborted(options.signal, 'WSL usage scan aborted');
+    attemptedHomes += 1;
     // Attribution is marker-based, independent of whether a parser returns data.
     const homeDataClients = homeHasData(home, existsSync, readdirSync);
     for (const id of homeDataClients) {
@@ -244,9 +249,9 @@ async function collectWslUsage(options = {}, deps = {}) {
           promaOptions.pricingByModel = options.promaPricingByModel;
         }
         const proma = buildProma(promaOptions);
-        bundle.today = mergePeriods(bundle.today, extractUsageFromTokscale(proma.today));
-        bundle.month = mergePeriods(bundle.month, extractUsageFromTokscale(proma.month));
-        bundle.allTime = mergePeriods(bundle.allTime, extractUsageFromTokscale(proma.allTime));
+        bundle.today = mergePeriods(bundle.today, extractUsageFromTokscale(proma.today, { providerHints }));
+        bundle.month = mergePeriods(bundle.month, extractUsageFromTokscale(proma.month, { providerHints }));
+        bundle.allTime = mergePeriods(bundle.allTime, extractUsageFromTokscale(proma.allTime, { providerHints }));
       } catch (error) {
         if (typeof logger === 'function') logger(`wsl Proma usage parse failed for ${home}: ${error.message}`);
       }
@@ -264,20 +269,30 @@ async function collectWslUsage(options = {}, deps = {}) {
       const allTimeJson = await runTokscale({ clients: clientsCsv, flags: ['--since', allTimeSince, '--home', home], commandTimeoutMs, signal: options.signal });
       throwIfAborted(options.signal, 'WSL usage scan aborted');
       const periods = {
-        today: extractUsageFromTokscale(todayJson),
-        month: extractUsageFromTokscale(monthJson),
-        allTime: extractUsageFromTokscale(allTimeJson)
+        today: extractUsageFromTokscale(todayJson, { providerHints }),
+        month: extractUsageFromTokscale(monthJson, { providerHints }),
+        allTime: extractUsageFromTokscale(allTimeJson, { providerHints })
       };
       if (typeof decoratePeriods === 'function') decoratePeriods(periods, home);
       bundle.today = mergePeriods(bundle.today, periods.today);
       bundle.month = mergePeriods(bundle.month, periods.month);
       bundle.allTime = mergePeriods(bundle.allTime, periods.allTime);
+      successfulHomes += 1;
     } catch (error) {
       throwIfAborted(options.signal, 'WSL usage scan aborted');
+      failedHomes += 1;
+      lastError = String(error?.message || error || 'unknown WSL scan error').slice(0, 300);
       if (typeof logger === 'function') logger(`wsl usage scan failed for ${home}: ${error.message}`);
     }
   }
-  return { bundle, detected: [...detected] };
+  return {
+    bundle,
+    detected: [...detected],
+    attemptedHomes,
+    successfulHomes,
+    failedHomes,
+    ...(lastError ? { lastError } : {})
+  };
 }
 
 module.exports = {

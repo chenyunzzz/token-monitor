@@ -43,9 +43,13 @@ TOKEN_MONITOR_HUB_URL=http://WINDOWS_HOST_IP:17321
 TOKEN_MONITOR_SECRET=你的共享密钥
 TOKEN_MONITOR_DEVICE_ID=wsl-agent
 TOKEN_MONITOR_CLIENTS=opencode,hermes,zcode
+# 可选：客户端只保存裸模型名时，显式补充代理归属；不要靠模型名猜测
+TOKEN_MONITOR_PROVIDER_HINTS={"pi/deepseek-v4-flash":"cliproxyapi","dsh/deepseek-v4-flash":"sub2api"}
 ```
 
 `TOKEN_MONITOR_DEVICE_ID` 必须与 Windows widget 的设备 ID 不同。Hub 会把相同 ID 当作同一台设备，后发送的记录会覆盖前一条。
+
+如果客户端日志只保存 `deepseek-v4-flash`，Token Monitor 无法从模型名判断它来自 CLIProxyAPI、Sub2API、Ollama 还是 OpenCode Go。可在 WSL agent 的 `.env` 中设置 `TOKEN_MONITOR_PROVIDER_HINTS`，键支持 `client/model`、`client:model`、模型名、客户端名和 `*`，越具体优先级越高。日志自身带有 provider 信息时优先使用日志；两者都没有则显示为 `Unclassified`。
 
 ## 3. 明确采集边界
 

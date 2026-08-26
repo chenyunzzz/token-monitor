@@ -38,6 +38,7 @@ TOKEN_MONITOR_SECRET=                # shared secret; must match the hub
 TOKEN_MONITOR_DEVICE_ID=             # optional — defaults to the hostname
 TOKEN_MONITOR_SYNC_UPLOAD_INTERVAL_MS= # optional — 0/live, 600000/10min, 1200000/20min, 1800000/30min
 TOKEN_MONITOR_CLIENTS=               # optional — defaults to all supported tools; empty disables tracking
+TOKEN_MONITOR_PROVIDER_HINTS=       # optional — JSON map for bare model ids, e.g. {"pi/deepseek-v4-flash":"cliproxyapi"}
 TOKEN_MONITOR_PROJECTS_ENABLED=      # optional — defaults off; 1 collects project metadata
 TOKEN_MONITOR_HISTORY_ENABLED=       # optional — defaults on; 0 skips trend history
 TOKEN_MONITOR_SESSION_USAGE_ARCHIVE_ENABLED= # optional — defaults on; 0 stops archiving deleted-session usage
@@ -62,6 +63,22 @@ TOKEN_MONITOR_WORKBUDDY_LOCALE=       # headless only — en or zh
 Provider credentials (Grok, DeepSeek, Minimax, Copilot, GLM / GLM Team, Volcengine, Qoder, Command Code, WorkBuddy, Ollama, Kimi, …) and proxy settings live in the same file. **`.env.example` is the complete, authoritative list** — start from it rather than copying keys by hand, since it stays in sync with the code. The desktop widget automatically reads the session owned by the local WorkBuddy app when that provider is enabled; the WorkBuddy token fields above remain only for headless/CLI deployments.
 
 The widget reads most settings as first-run defaults. WorkBuddy follows the same provider checkbox as other auto-detected integrations on macOS and Windows; Linux local-app monitoring is unsupported. Desktop users do not copy a token, and the WorkBuddy token fields above apply only to the headless agent/CLI. The agent and hub take a CLI flag over an env var over the built-in default.
+
+### Provider attribution for proxy-backed clients
+
+Some clients store only `deepseek-v4-flash` in their session data even when the
+request was sent through CLIProxyAPI, Sub2API, Ollama, or OpenCode Go. Token
+Monitor cannot recover that distinction from the model name alone. Set
+`TOKEN_MONITOR_PROVIDER_HINTS` in the same WSL agent `.env` that reads those
+sessions:
+
+```env
+TOKEN_MONITOR_PROVIDER_HINTS={"pi/deepseek-v4-flash":"cliproxyapi","dsh/deepseek-v4-flash":"sub2api"}
+```
+
+The key can be `client/model`, `client:model`, a model, a client, or `*`; the
+most specific matching key wins. Explicit provider metadata in a session row
+always wins over a hint. Rows with neither remain under **Unclassified**.
 
 One-shot run (collect once and exit — useful for cron / launchd):
 

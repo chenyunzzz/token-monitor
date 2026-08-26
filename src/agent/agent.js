@@ -13,7 +13,7 @@ const {
   parseLimitProviders
 } = require('../shared/limitCollector');
 const { postSyncPayload } = require('../shared/syncPayload');
-const { applyProjectRollups } = require('../shared/usage');
+const { applyProjectRollups, normalizeProviderHints } = require('../shared/usage');
 const { runAgent, runAgentOnce } = require('./runtime');
 const {
   applySessionUsageArchive,
@@ -63,6 +63,12 @@ const opencodeAmbientEnabled = parseBoolean(
 const opencodeCookie = String(process.env.TOKEN_MONITOR_OPENCODE_COOKIE || '').trim();
 const once = Boolean(args.once);
 const dryRun = Boolean(args['dry-run'] || args.dryRun);
+const providerHints = normalizeProviderHints(
+  args.providerHints
+    ?? args['provider-hints']
+    ?? process.env.TOKEN_MONITOR_PROVIDER_HINTS
+    ?? process.env.TOKEN_MONITOR_PROVIDER_MAP
+);
 
 const usageOptions = {
   clients,
@@ -80,6 +86,7 @@ const usageOptions = {
   intervalMs,
   watchEnabled,
   watchDebounceMs,
+  providerHints,
   wslScanEnabled,
   onError: (error, reason) => console.error(`[${new Date().toISOString()}] (${reason}) ${error.message}`),
   logger: (message) => (dryRun ? console.error(message) : console.log(message))

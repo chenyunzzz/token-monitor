@@ -43,9 +43,17 @@ TOKEN_MONITOR_HUB_URL=http://WINDOWS_HOST_IP:17321
 TOKEN_MONITOR_SECRET=YOUR_SHARED_SECRET
 TOKEN_MONITOR_DEVICE_ID=wsl-agent
 TOKEN_MONITOR_CLIENTS=opencode,hermes,zcode
+TOKEN_MONITOR_PROVIDER_HINTS={"pi/deepseek-v4-flash":"cliproxyapi","dsh/deepseek-v4-flash":"sub2api"}
 ```
 
 `TOKEN_MONITOR_DEVICE_ID` must differ from the Windows widget device ID. The hub treats matching IDs as the same device, so a duplicate ID would make the latest post replace the previous record.
+
+If a client stores only the bare `deepseek-v4-flash` model id, Token Monitor
+cannot tell whether it came from CLIProxyAPI, Sub2API, Ollama, or OpenCode Go.
+Set `TOKEN_MONITOR_PROVIDER_HINTS` in the WSL agent's `.env`; keys may be
+`client/model`, `client:model`, a model, a client, or `*`, with the most
+specific match winning. Explicit provider metadata from the session wins;
+otherwise the row remains `Unclassified`.
 
 ## 3. Choose one collection boundary
 

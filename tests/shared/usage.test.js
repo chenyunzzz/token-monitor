@@ -873,8 +873,45 @@ test('extractUsageFromTokscale keeps identical models separate by provider', () 
     'opencode-go': { 'deepseek-v4-flash': 0.02 },
     deepseek: { 'deepseek-v4-flash:latest': 0.03 }
   });
+  assert.deepEqual(period.clientProviderModels, {
+    opencode: {
+      ollama: { 'deepseek-v4-flash': 10 },
+      'opencode-go': { 'deepseek-v4-flash': 20 }
+    },
+    reasonix: {
+      deepseek: { 'deepseek-v4-flash:latest': 30 }
+    }
+  });
+  assert.deepEqual(period.clientProviderModelCosts, {
+    opencode: {
+      ollama: { 'deepseek-v4-flash': 0.01 },
+      'opencode-go': { 'deepseek-v4-flash': 0.02 }
+    },
+    reasonix: {
+      deepseek: { 'deepseek-v4-flash:latest': 0.03 }
+    }
+  });
   assert.equal(period.models['deepseek-v4-flash'], 30);
   assert.equal(period.models['deepseek-v4-flash:latest'], 30);
+});
+
+test('qualified model ids provide a narrow provider fallback without changing legacy model totals', () => {
+  const period = extractUsageFromTokscale([
+    { client: 'dsh', model: 'ollama/deepseek-v4-flash', totalTokens: 12 },
+    { client: 'omp', model: 'opencode-go/deepseek-v4-flash', totalTokens: 8 },
+    { client: 'omp', model: 'vendor/custom-model', totalTokens: 4 }
+  ]);
+
+  assert.equal(period.models['ollama/deepseek-v4-flash'], 12);
+  assert.equal(period.models['opencode-go/deepseek-v4-flash'], 8);
+  assert.deepEqual(period.providerModels, {
+    ollama: { 'deepseek-v4-flash': 12 },
+    'opencode-go': { 'deepseek-v4-flash': 8 }
+  });
+  assert.deepEqual(period.clientProviderModels, {
+    dsh: { ollama: { 'deepseek-v4-flash': 12 } },
+    pi: { 'opencode-go': { 'deepseek-v4-flash': 8 } }
+  });
 });
 
 test('detectModel and detectProvider read nested metadata without stringifying objects', () => {
@@ -887,6 +924,26 @@ test('detectModel and detectProvider read nested metadata without stringifying o
   assert.equal(detectModel(row), 'deepseek-v4-flash');
   assert.equal(detectProvider(row), 'opencode-go');
   assert.notEqual(detectModel({ model: { providerID: 'opencode-go' } }), '[object object]');
+});
+
+test('provider hints attribute bare proxy model ids without guessing unconfigured providers', () => {
+  const hinted = extractUsageFromTokscale([
+    { client: 'pi', model: 'deepseek-v4-flash', totalTokens: 12 },
+    { client: 'dsh', model: 'deepseek-v4-flash', totalTokens: 8 },
+    { client: 'dsh', model: 'other-model', totalTokens: 4 }
+  ], {
+    providerHints: JSON.stringify({
+      'pi/deepseek-v4-flash': 'cliproxyapi',
+      'dsh/deepseek-v4-flash': 'sub2api'
+    })
+  });
+
+  assert.deepEqual(hinted.providerModels, {
+    cliproxyapi: { 'deepseek-v4-flash': 12 },
+    sub2api: { 'deepseek-v4-flash': 8 }
+  });
+  assert.equal(hinted.models['other-model'], 4);
+  assert.ok(!hinted.providerModels.other);
 });
 
 test('extractUsageBundleFromTokscale partitions every aggregate field exactly by client', () => {
