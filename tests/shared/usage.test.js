@@ -499,6 +499,35 @@ test('mergeDeviceRecord preserves usage for clients omitted by the active tracke
   });
 });
 
+test('mergeDeviceRecord can replace stale clients when the sender owns the device client list', () => {
+  const merged = mergeDeviceRecord({
+    deviceId: 'desktop',
+    trackedClients: ['dsh'],
+    today: {
+      totalTokens: 100,
+      clients: { dsh: 100 },
+      models: { 'deepseek-v4-flash': 100 },
+      clientModels: { dsh: { 'deepseek-v4-flash': 100 } },
+      sessions: { 'dsh:old': { client: 'dsh', sessionId: 'old', totalTokens: 100 } }
+    }
+  }, {
+    deviceId: 'desktop',
+    trackedClients: ['codex'],
+    replaceUntrackedClients: true,
+    today: {
+      totalTokens: 50,
+      clients: { codex: 50 },
+      models: { 'gpt-5': 50 },
+      clientModels: { codex: { 'gpt-5': 50 } },
+      sessions: { 'codex:new': { client: 'codex', sessionId: 'new', totalTokens: 50 } }
+    }
+  });
+
+  assert.equal(merged.periods.today.totalTokens, 50);
+  assert.deepEqual(merged.periods.today.clients, { codex: 50 });
+  assert.equal(merged.periods.today.sessions['dsh:old'], undefined);
+});
+
 test('mergeDeviceRecord marks unrecoverable all-time project attribution incomplete', () => {
   const existing = {
     deviceId: 'macbook',

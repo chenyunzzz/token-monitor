@@ -214,6 +214,19 @@ test('captures and reapplies missing sessions for any client without double-coun
   assert.equal(visible.allTime.sessions['opencode:o1'].archived, true);
 });
 
+test('can scope archive replay to the clients enabled on the current device', () => {
+  const archive = captureSessionUsageArchive({}, liveSummary(), new Date('2026-07-09T08:15:00.000Z'));
+  const visible = applySessionUsageArchive(summaryAfterOpenCodeDelete(), archive, {
+    now: new Date('2026-07-09T08:20:00.000Z'),
+    activeClients: 'codex'
+  });
+
+  assert.equal(visible.today.clients.opencode, undefined);
+  assert.equal(visible.today.sessions['opencode:o1'], undefined);
+  assert.equal(visible.today.clients.codex, 50);
+  assert.equal(visible.today.totalTokens, 50);
+});
+
 test('archive day and month windows expire while all-time stays available', () => {
   // The month window expires on the local calendar month, and this is the one
   // pair in the file that straddles a month edge: `2026-08-01T00:20Z` is still

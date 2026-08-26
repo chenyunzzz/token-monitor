@@ -53,15 +53,39 @@ function sourceValue(record) {
   const data = record?.data || {};
   const message = data.message || record?.message || {};
   const source = message.source || data.source || record?.source || {};
+  const model = typeof source === 'object'
+    ? firstString(source, ['model', 'modelId', 'modelID', 'model_id', 'name'])
+    : String(source || '').trim();
+  const provider = typeof source === 'object'
+    ? firstString(source, ['provider', 'providerId', 'providerID', 'provider_id', 'name'])
+    : '';
   return {
-    model: typeof source === 'object'
-      ? firstString(source, ['model', 'modelId', 'modelID', 'model_id', 'name'])
-      : String(source || '').trim(),
-    provider: typeof source === 'object'
-      ? firstString(source, ['provider', 'providerId', 'providerID', 'provider_id', 'name'])
-      : '',
+    model: model || firstString(record, ['model', 'modelId', 'modelID', 'model_id', 'modelName', 'model_name'])
+      || firstString(data, ['model', 'modelId', 'modelID', 'model_id', 'modelName', 'model_name']),
+    provider: provider || firstString(record, ['provider', 'providerId', 'providerID', 'provider_id'])
+      || firstString(data, ['provider', 'providerId', 'providerID', 'provider_id']),
     message
   };
+}
+
+function fillSessionModelGaps(rows) {
+  const bySession = new Map();
+  for (const row of rows) {
+    const key = row.sessionId || '';
+    if (!key) continue;
+    const info = bySession.get(key) || { models: new Set(), providers: new Set() };
+    if (row.model && row.model !== 'unknown') info.models.add(row.model);
+    if (row.provider) info.providers.add(row.provider);
+    bySession.set(key, info);
+  }
+  return rows.map((row) => {
+    if (row.model !== 'unknown') return row;
+    const info = bySession.get(row.sessionId || '');
+    if (!info || info.models.size !== 1) return row;
+    const model = [...info.models][0];
+    const provider = !row.provider && info.providers.size === 1 ? [...info.providers][0] : row.provider;
+    return { ...row, model, ...(provider ? { provider } : {}) };
+  });
 }
 
 function usageFromRecord(record) {
@@ -140,7 +164,7 @@ function parseDshUsageText(text, filePath = '') {
       lastUsedAt: new Date(time).toISOString()
     });
   }
-  return rows;
+  return fillSessionModelGaps(rows);
 }
 
 function parseDshUsageFile(filePath) {

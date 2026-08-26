@@ -69,6 +69,13 @@ function hasSessionUsage(session) {
   return numberValue(session?.totalTokens) > 0 || numberValue(session?.costUsd) > 0;
 }
 
+function activeClientSet(value) {
+  if (value == null) return null;
+  if (value instanceof Set) return new Set([...value].map((client) => String(client).trim().toLowerCase()).filter(Boolean));
+  const clients = Array.isArray(value) ? value : String(value).split(',');
+  return new Set(clients.map((client) => String(client).trim().toLowerCase()).filter(Boolean));
+}
+
 function normalizeSessionUsageArchive(value) {
   const source = value?.sessions && typeof value.sessions === 'object' ? value.sessions : value;
   const normalized = { version: 1, sessions: {} };
@@ -259,6 +266,7 @@ function shouldApplyPeriod(periodName, entry, now) {
 
 function applySessionUsageArchive(summary, archive, options = {}) {
   const normalizedArchive = normalizeSessionUsageArchive(archive);
+  const activeClients = activeClientSet(options.activeClients);
   const now = toDate(options.now);
   const next = clone(summary);
   const periodContainer = next.periods && typeof next.periods === 'object' ? next.periods : next;
@@ -275,6 +283,7 @@ function applySessionUsageArchive(summary, archive, options = {}) {
   };
 
   for (const entry of Object.values(normalizedArchive.sessions)) {
+    if (activeClients && !activeClients.has(String(entry.client).trim().toLowerCase())) continue;
     for (const periodName of PERIODS) {
       const session = entry.periods?.[periodName];
       if (!session || !hasSessionUsage(session) || !shouldApplyPeriod(periodName, entry, now)) continue;

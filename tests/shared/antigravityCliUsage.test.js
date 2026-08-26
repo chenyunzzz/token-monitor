@@ -16,6 +16,13 @@ test('modelCandidates prefers canonical Gemini ids found in agy protobuf blobs',
   );
 });
 
+test('modelCandidates recognizes canonical Claude ids and provider enums', () => {
+  assert.deepEqual(
+    modelCandidates('claude-opus-4-6-thinking MODEL_ANTHROPIC_CLAUDE_3_7_SONNET'),
+    ['claude-opus-4-6-thinking', 'claude-3.7-sonnet']
+  );
+});
+
 test('collectAntigravityCliModels indexes models by conversation database id', () => {
   const blobs = {
     gen_metadata: [{ data: Buffer.from('Gemini 3.7 Flash (High)') }],

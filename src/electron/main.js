@@ -2381,7 +2381,10 @@ function summaryWithArchivesApplied(summary, sessionArchive, now) {
   });
   const visibleSummary = settings?.sessionUsageArchiveEnabled === false
     ? withArchivedClients
-    : applySessionUsageArchive(withArchivedClients, sessionArchive, { now });
+    : applySessionUsageArchive(withArchivedClients, sessionArchive, {
+      now,
+      activeClients: settings?.clients
+    });
   return settings?.projectsEnabled === false ? visibleSummary : applyProjectRollups(visibleSummary);
 }
 
@@ -3477,7 +3480,7 @@ function startHostCollector() {
         if (stale && stale !== visibleSummary.deviceId) {
           embeddedHub.hub.deleteDevice(stale);
         }
-        const payload = syncPayload(visibleSummary);
+        const payload = syncPayload(visibleSummary, { replaceUntrackedClients: true });
         if (payload.allTimeProjectsOmitted === true) {
           console.log('[host-ingest] all-time project breakdown omitted to reduce the sync snapshot size');
         }
@@ -3492,6 +3495,22 @@ function startHostCollector() {
     }
   };
   const usageOptions = electronUsageConfig('host-collector');
+  if (!lastCollectedDevice) {
+    const seeded = deviceRecordFromAnchor(
+      readJson(path.join(sharedDataDir(), 'collector-anchor.json'), null),
+      {
+        envelope: electronDeviceEnvelope(),
+        clients: usageOptions.clients,
+        allTimeSince: usageOptions.allTimeSince,
+        projectsEnabled: usageOptions.projectsEnabled,
+        wslScanEnabled: usageOptions.wslScanEnabled,
+        wslSupported: process.platform === 'win32',
+        hostname: os.hostname(),
+        platform: `${process.platform}-${process.arch}`
+      }
+    );
+    if (seeded) lastCollectedDevice = seeded;
+  }
   deviceRuntimeHandle = createDeviceRuntime({
     envelope: electronDeviceEnvelope(),
     initialLimits: lastCollectedDevice?.limits,
@@ -3554,6 +3573,7 @@ function injectLocalDeviceStatus(stats) {
       if (lastCollectedDevice.clientStatus) device.clientStatus = lastCollectedDevice.clientStatus;
       if (lastCollectedDevice.clientHealth) device.clientHealth = lastCollectedDevice.clientHealth;
       if (lastCollectedDevice.wslStatus) device.wslStatus = lastCollectedDevice.wslStatus;
+      if (lastCollectedDevice.sourcePeriods) device.sourcePeriods = lastCollectedDevice.sourcePeriods;
     }
   }
   // syncPayload drops the unbounded allTime.sessions from uploads (#118), so a hub

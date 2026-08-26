@@ -1045,6 +1045,22 @@ function normalizeDeviceOsName(value) {
   return String(value || '').trim().slice(0, 64);
 }
 
+function normalizeSourcePeriods(value, projectsEnabled = true) {
+  if (!value || typeof value !== 'object') return null;
+  const normalized = {};
+  for (const [source, periods] of Object.entries(value)) {
+    if (!periods || typeof periods !== 'object') continue;
+    const sourcePeriods = {};
+    for (const periodName of PERIODS) {
+      if (periods[periodName] && typeof periods[periodName] === 'object') {
+        sourcePeriods[periodName] = normalizePeriod(periods[periodName], { projectsEnabled });
+      }
+    }
+    if (Object.keys(sourcePeriods).length > 0) normalized[String(source).slice(0, 32)] = sourcePeriods;
+  }
+  return Object.keys(normalized).length > 0 ? normalized : null;
+}
+
 function normalizeDeviceRecord(record) {
   const nowIso = new Date().toISOString();
   const normalized = {
@@ -1069,8 +1085,12 @@ function normalizeDeviceRecord(record) {
     const health = normalizeClientHealth(record.clientHealth, normalizeClientName);
     if (health) normalized.clientHealth = health;
   }
-  if (hasOwn(record, 'wslStatus')) normalized.wslStatus = normalizeWslStatus(record.wslStatus);
   if (hasOwn(record, 'projectsEnabled')) normalized.projectsEnabled = record.projectsEnabled !== false;
+  if (hasOwn(record, 'wslStatus')) normalized.wslStatus = normalizeWslStatus(record.wslStatus);
+  if (hasOwn(record, 'sourcePeriods')) {
+    const sourcePeriods = normalizeSourcePeriods(record.sourcePeriods, normalized.projectsEnabled !== false);
+    if (sourcePeriods) normalized.sourcePeriods = sourcePeriods;
+  }
   if (hasOwn(record, 'allTimeProjectsOmitted')) normalized.allTimeProjectsOmitted = record.allTimeProjectsOmitted === true;
   if (hasOwn(record, 'allTimeProjectsIncomplete')) normalized.allTimeProjectsIncomplete = record.allTimeProjectsIncomplete === true;
   if (hasOwn(record, 'sessionDetailsOmitted')) {
@@ -1297,6 +1317,7 @@ function mergeDeviceRecord(existing, incoming) {
   const hasIncomingLimits = incoming && typeof incoming === 'object' && Object.prototype.hasOwnProperty.call(incoming, 'limits');
   const hasIncomingHistory = incoming && typeof incoming === 'object' && Object.prototype.hasOwnProperty.call(incoming, 'history');
   const hasIncomingTrackedClients = hasOwn(incoming, 'trackedClients');
+  const replaceUntrackedClients = incoming?.replaceUntrackedClients === true;
   const normalizedIncoming = normalizeDeviceRecord(incoming || {});
   if (!hasExisting) return normalizedIncoming;
 
@@ -1333,7 +1354,7 @@ function mergeDeviceRecord(existing, incoming) {
   if (!hasIncomingLimits) normalizedIncoming.limits = normalizedExisting.limits;
   else normalizedIncoming.limits = mergeDeviceLimits(normalizedExisting, normalizedIncoming);
   if (!hasIncomingHistory && hasOwn(normalizedExisting, 'history')) normalizedIncoming.history = normalizedExisting.history;
-  if (hasIncomingTrackedClients) {
+  if (hasIncomingTrackedClients && !replaceUntrackedClients) {
     preserveUntrackedClientUsage(normalizedExisting, normalizedIncoming, normalizedIncoming.trackedClients || []);
   }
   return normalizedIncoming;
@@ -1599,6 +1620,7 @@ function aggregateDevices(devices, staleAfterMs, nowMs = Date.now()) {
       // diagnostics on the unauthenticated surface.
       ...(hasOwn(normalized, 'clientHealth') ? { clientHealth: normalized.clientHealth } : {}),
       ...(hasOwn(normalized, 'wslStatus') ? { wslStatus: normalized.wslStatus } : {}),
+      ...(hasOwn(normalized, 'sourcePeriods') ? { sourcePeriods: normalized.sourcePeriods } : {}),
       ...(hasOwn(normalized, 'projectsEnabled') ? { projectsEnabled: normalized.projectsEnabled } : {}),
       ...(hasOwn(normalized, 'allTimeProjectsOmitted') ? { allTimeProjectsOmitted: normalized.allTimeProjectsOmitted } : {}),
       ...(hasOwn(normalized, 'allTimeProjectsIncomplete') ? { allTimeProjectsIncomplete: normalized.allTimeProjectsIncomplete } : {}),

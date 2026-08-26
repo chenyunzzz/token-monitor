@@ -184,10 +184,13 @@ test('the WSL bundle is summed in, and only while WSL scanning is on', () => {
   assert.equal(merged.today.totalTokens, 1_400);
   assert.equal(merged.month.totalTokens, 39_000);
   assert.equal(merged.allTime.totalTokens, 1_000_000);
+  assert.equal(merged.sourcePeriods.wsl.today.totalTokens, 400);
+  assert.equal(merged.sourcePeriods.wsl.allTime.totalTokens, 100_000);
 
   const hostOnly = deviceRecordFromAnchor(anchorFixture({ wslBundle }), seedOptions({ wslScanEnabled: false }));
   assert.equal(hostOnly.today.totalTokens, 1_000);
   assert.equal(hostOnly.allTime.totalTokens, 900_000);
+  assert.equal(Object.prototype.hasOwnProperty.call(hostOnly, 'sourcePeriods'), false);
 });
 
 test('the seeded totals survive aggregation once the UTC day has rolled over', () => {

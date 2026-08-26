@@ -3,9 +3,9 @@
 const fs = require('node:fs');
 const path = require('node:path');
 
-const MODEL_ID_RE = /(?<![A-Za-z0-9])gemini-[0-9][A-Za-z0-9._-]*/gi;
-const MODEL_LABEL_RE = /Gemini\s+[0-9][A-Za-z0-9 .()_-]{2,80}/g;
-const MODEL_ENUM_RE = /MODEL_GOOGLE_GEMINI_([0-9_]+)_(FLASH|PRO)(?:_([A-Z]+))?/g;
+const MODEL_ID_RE = /(?<![A-Za-z0-9])(?:gemini|claude|gpt|deepseek|qwen|mistral|llama)-[A-Za-z0-9][A-Za-z0-9._-]*/gi;
+const MODEL_LABEL_RE = /(?:Gemini|Claude|GPT|DeepSeek|Qwen|Mistral|Llama)\s+[0-9][A-Za-z0-9 .()_-]{2,80}/g;
+const MODEL_ENUM_RE = /MODEL_(GOOGLE_GEMINI|ANTHROPIC_CLAUDE|OPENAI_GPT|DEEPSEEK|QWEN|MISTRAL|META_LLAMA)_([A-Z0-9_]+)/gi;
 const IGNORE_MODELS = new Set([
   'gemini_model',
   'gemini_coder',
@@ -14,10 +14,21 @@ const IGNORE_MODELS = new Set([
 ]);
 
 function modelFromEnum(match) {
-  const version = match[1].replace(/_/g, '.');
-  const family = match[2].toLowerCase();
-  const suffix = match[3] ? `-${match[3].toLowerCase()}` : '';
-  return `gemini-${version}-${family}${suffix}`;
+  const prefix = {
+    GOOGLE_GEMINI: 'gemini',
+    ANTHROPIC_CLAUDE: 'claude',
+    OPENAI_GPT: 'gpt',
+    DEEPSEEK: 'deepseek',
+    QWEN: 'qwen',
+    MISTRAL: 'mistral',
+    META_LLAMA: 'llama'
+  }[match[1].toUpperCase()];
+  if (!prefix) return '';
+  const parts = match[2].toLowerCase().split('_');
+  const version = [];
+  while (/^\d+$/.test(parts[0] || '') && version.length < 2) version.push(parts.shift());
+  const body = [...(version.length > 0 ? [version.join('.')] : []), ...parts].join('-');
+  return body ? `${prefix}-${body}` : '';
 }
 
 function modelCandidates(value) {
@@ -29,11 +40,14 @@ function modelCandidates(value) {
     const model = match[0].toLowerCase();
     if (!IGNORE_MODELS.has(model)) candidates.push(model);
   }
-  for (const match of text.matchAll(MODEL_ENUM_RE)) candidates.push(modelFromEnum(match));
+  for (const match of text.matchAll(MODEL_ENUM_RE)) {
+    const model = modelFromEnum(match);
+    if (model) candidates.push(model);
+  }
   if (candidates.length === 0) {
     for (const match of text.matchAll(MODEL_LABEL_RE)) {
       const model = match[0].replace(/\s+/g, ' ').trim();
-      if (!/^Gemini\s+status$/i.test(model)) candidates.push(model);
+      if (!/^(?:Gemini|Claude|GPT|DeepSeek|Qwen|Mistral|Llama)\s+status$/i.test(model)) candidates.push(model);
     }
   }
   return candidates;
@@ -49,7 +63,7 @@ function databaseModel(db) {
     for (const model of modelCandidates(row?.data)) {
       // Canonical ids are more useful for pricing and remain stable if the UI
       // label contains a gateway/account suffix.
-      if (model.startsWith('gemini-')) return model;
+      if (/^(?:gemini|claude|gpt|deepseek|qwen|mistral|llama)-/.test(model)) return model;
       label = model;
     }
   }

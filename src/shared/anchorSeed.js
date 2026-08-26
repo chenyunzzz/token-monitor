@@ -75,6 +75,7 @@ function deviceRecordFromAnchor(saved, options = {}) {
     // subtly unlike the one replacing it.
     projectsEnabled,
     ...(wslStatus ? { wslStatus } : {}),
+    ...(wsl ? { sourcePeriods: { wsl } } : {}),
     // Required, not decorative. Without them aggregateDevices falls back to
     // comparing UTC days, and anywhere ahead of UTC a local day that has not
     // rolled over in UTC yet reads as an expired window: today's tokens get

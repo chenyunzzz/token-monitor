@@ -34,31 +34,70 @@
       : model;
   }
 
+  function normalizedModelKey(client, model, soleKnownModel) {
+    const normalizedClient = String(client || '').trim().toLowerCase();
+    const normalizedModel = String(model || '').trim().toLowerCase();
+    if (normalizedClient === 'antigravity' && (normalizedModel === 'unknown' || normalizedModel === 'auto-detected')) {
+      return 'auto-detected';
+    }
+    if (normalizedClient === 'dsh' && normalizedModel === 'unknown' && soleKnownModel) {
+      return soleKnownModel;
+    }
+    return String(model || '').trim() || 'unknown';
+  }
+
   function modelsForClient(period, client, clientValue, unclassifiedLabel) {
     const legacyModels = positiveEntries(period.clientModels?.[client]);
-    const legacyTotals = new Map(legacyModels);
+    const knownLegacyModels = legacyModels
+      .map(([model]) => String(model || '').trim())
+      .filter((model) => !['', 'unknown', 'auto-detected'].includes(model.toLowerCase()));
+    const soleKnownModel = knownLegacyModels.length === 1 ? knownLegacyModels[0] : '';
+    const legacyTotals = new Map();
+    for (const [model, value] of legacyModels) {
+      const key = normalizedModelKey(client, model, soleKnownModel);
+      legacyTotals.set(key, (legacyTotals.get(key) || 0) + value);
+    }
     const providerRows = [];
     const accountedByModel = new Map();
+    const providerRowsByKey = new Map();
     const providers = period.clientProviderModels?.[client] || {};
     for (const [provider, models] of Object.entries(providers)) {
       for (const [model, rawValue] of positiveEntries(models)) {
-        const budget = legacyTotals.has(model)
-          ? Math.max(0, (legacyTotals.get(model) || 0) - (accountedByModel.get(model) || 0))
+        const modelKey = normalizedModelKey(client, model, soleKnownModel);
+        const budget = legacyTotals.has(modelKey)
+          ? Math.max(0, (legacyTotals.get(modelKey) || 0) - (accountedByModel.get(modelKey) || 0))
           : Math.max(0, clientValue - providerRows.reduce((sum, row) => sum + row.value, 0));
         const value = Math.min(rawValue, budget);
         if (value <= 0) continue;
-        accountedByModel.set(model, (accountedByModel.get(model) || 0) + value);
-        providerRows.push({
-          key: `provider:${provider}/${model}`,
-          name: `${providerLabel(provider)} / ${providerModelLabel(provider, model)}`,
-          value
-        });
+        accountedByModel.set(modelKey, (accountedByModel.get(modelKey) || 0) + value);
+        const key = `provider:${provider}/${modelKey}`;
+        const existing = providerRowsByKey.get(key);
+        if (existing) existing.value += value;
+        else {
+          const row = {
+            key,
+            name: `${providerLabel(provider)} / ${providerModelLabel(provider, modelKey)}`,
+            value
+          };
+          providerRowsByKey.set(key, row);
+          providerRows.push(row);
+        }
       }
     }
     const rows = [...providerRows];
+    const legacyResiduals = new Map();
+    const legacyLabels = new Map();
     for (const [model, value] of legacyModels) {
-      const residual = Math.max(0, value - (accountedByModel.get(model) || 0));
-      if (residual > 0) rows.push({ key: model, name: model, value: residual });
+      const modelKey = normalizedModelKey(client, model, soleKnownModel);
+      legacyResiduals.set(modelKey, (legacyResiduals.get(modelKey) || 0) + value);
+      if (!legacyLabels.has(modelKey) || modelKey !== 'unknown') legacyLabels.set(modelKey, modelKey);
+    }
+    for (const [modelKey, total] of legacyResiduals) {
+      const residual = Math.max(0, total - (accountedByModel.get(modelKey) || 0));
+      if (residual > 0) {
+        const label = legacyLabels.get(modelKey) || modelKey;
+        rows.push({ key: label, name: label, value: residual });
+      }
     }
     const accounted = rows.reduce((sum, row) => sum + row.value, 0);
     const unclassified = Math.max(0, clientValue - accounted);

@@ -119,7 +119,7 @@ function summaryWithSessionUsageArchive(summary, now = new Date()) {
     } else if (!dryRun) {
       sessionUsageArchive = next;
     }
-    visibleSummary = applySessionUsageArchive(summary, next, { now: archiveDate });
+    visibleSummary = applySessionUsageArchive(summary, next, { now: archiveDate, activeClients: clients });
   }
   return projectsEnabled ? applyProjectRollups(visibleSummary) : visibleSummary;
 }
@@ -128,6 +128,7 @@ async function postUsage(summary) {
   const { response } = await postSyncPayload(fetch, `${hubUrl}/api/ingest`, {
     headers: { 'content-type': 'application/json', ...(secret ? { authorization: `Bearer ${secret}` } : {}) },
     summary,
+    replaceUntrackedClients: true,
     logger: (message) => console.warn(`[sync] ${message}`)
   });
   if (!response.ok) throw new Error(`Hub responded ${response.status}: ${(await response.text()).slice(0, 300)}`);

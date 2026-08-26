@@ -177,10 +177,12 @@ function sessionsWithoutReasonix(sessions) {
 
 function buildSyncPayload(summary, {
   omitAllTimeProjects = false,
-  omitHistoryTokenComponents = false
+  omitHistoryTokenComponents = false,
+  replaceUntrackedClients = false
 } = {}) {
   if (!summary || typeof summary !== 'object') return summary;
   const payload = { ...summary, limits: syncLimits(summary.limits) };
+  if (replaceUntrackedClients === true) payload.replaceUntrackedClients = true;
   if (summary.history && typeof summary.history === 'object') {
     payload.history = historyForSync(summary.history, summary.periodWindows);
     if (omitHistoryTokenComponents) {
@@ -267,8 +269,13 @@ function syncPayload(summary, options = {}) {
   return serializeSyncPayload(summary, options).payload;
 }
 
-async function postSyncPayload(fetchFn, url, { headers = {}, summary, logger } = {}) {
-  let serialized = serializeSyncPayload(summary);
+async function postSyncPayload(fetchFn, url, {
+  headers = {},
+  summary,
+  logger,
+  replaceUntrackedClients = false
+} = {}) {
+  let serialized = serializeSyncPayload(summary, { replaceUntrackedClients });
   if (serialized.payload?.allTimeProjectsOmitted === true && typeof logger === 'function') {
     logger(`all-time project breakdown omitted; payload reduced to ${serialized.bytes} bytes (budget ${SYNC_PAYLOAD_BUDGET_BYTES})`);
   }
@@ -286,9 +293,10 @@ async function postSyncPayload(fetchFn, url, { headers = {}, summary, logger } =
   }
   let response = await fetchFn(url, { method: 'POST', headers, body: serialized.body });
   const retrySerialized = response.status === 413
-    ? serializeSyncPayload(summary, {
+      ? serializeSyncPayload(summary, {
         omitHistoryTokenComponents: true,
-        omitAllTimeProjects: true
+        omitAllTimeProjects: true,
+        replaceUntrackedClients
       })
     : null;
   const canRetryReduced = response.status === 413

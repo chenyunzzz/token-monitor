@@ -33,6 +33,9 @@ const WSL_DATA_MARKERS = [
   '.grok/sessions',
   '.copilot/otel',
   '.gemini/antigravity-cli/conversations',
+  '.gemini/antigravity/conversations',
+  '.gemini/antigravity-ide/conversations',
+  '.gemini/antigravity-backup/conversations',
   '.config/Code/User/globalStorage/saoudrizwan.claude-dev/tasks',
   '.vscode-server/data/User/globalStorage/saoudrizwan.claude-dev/tasks',
   '.pi/agent/sessions',
@@ -76,6 +79,9 @@ const MARKER_CLIENTS = {
   // Antigravity CLI's own parse-local root, mapped to the umbrella `antigravity`
   // id we track; tokscaleClientFilter widens the scan to the antigravity-cli id.
   '.gemini/antigravity-cli/conversations': 'antigravity',
+  '.gemini/antigravity/conversations': 'antigravity',
+  '.gemini/antigravity-ide/conversations': 'antigravity',
+  '.gemini/antigravity-backup/conversations': 'antigravity',
   '.config/Code/User/globalStorage/saoudrizwan.claude-dev/tasks': 'cline',
   '.vscode-server/data/User/globalStorage/saoudrizwan.claude-dev/tasks': 'cline',
   '.pi/agent/sessions': 'pi',
@@ -97,7 +103,8 @@ const MARKER_CLIENTS = {
   '.proma/agent-sessions': 'proma'
 };
 
-// Default command runner. reg output is ANSI/utf8; wsl.exe output is UTF-16LE.
+// Default command runner. The distro list uses UTF-16LE on Windows, while
+// commands executed inside a distro generally return UTF-8.
 // stdin is NUL ('ignore') so a non-WSL wsl.exe stub cannot block on "press any
 // key to install"; a timeout backstops any hang.
 function defaultExec(cmd, args) {
@@ -109,7 +116,11 @@ function defaultExec(cmd, args) {
     windowsHide: true,
     encoding: 'buffer'
   });
-  return Buffer.from(out).toString(isWsl ? 'utf16le' : 'utf8');
+  if (!isWsl) return Buffer.from(out).toString('utf8');
+  const buffer = Buffer.from(out);
+  let nulBytes = 0;
+  for (const byte of buffer) if (byte === 0) nulBytes += 1;
+  return buffer.toString(nulBytes > buffer.length / 8 ? 'utf16le' : 'utf8');
 }
 
 // Some Windows processes cannot open the WSL 9P share (`\\wsl$`) even though
@@ -118,7 +129,10 @@ function defaultExec(cmd, args) {
 // and parsed usage rows; prompts and message text are never persisted or logged.
 const WSL_BRIDGE_MARKERS = [
   ['/.dsh/sessions', 'dsh'],
-  ['/.gemini/antigravity-cli/conversations', 'antigravity']
+  ['/.gemini/antigravity-cli/conversations', 'antigravity'],
+  ['/.gemini/antigravity/conversations', 'antigravity'],
+  ['/.gemini/antigravity-ide/conversations', 'antigravity'],
+  ['/.gemini/antigravity-backup/conversations', 'antigravity']
 ];
 
 function runWslBridgeCommand(distro, args, deps = {}) {
@@ -132,10 +146,14 @@ function wslBridgeHomes(deps = {}) {
     let output;
     try {
       output = runWslBridgeCommand(distro, [
-        'find', '/home', '/root', '-type', 'd', '(',
+        'find', '/home', '-type', 'd', '\\(',
+        '-path', '*/.dsh/update-backups', '-prune', '-o', '\\(',
         '-path', '*/.dsh/sessions', '-o',
-        '-path', '*/.gemini/antigravity-cli/conversations',
-        ')', '-print'
+        '-path', '*/.gemini/antigravity-cli/conversations', '-o',
+        '-path', '*/.gemini/antigravity/conversations', '-o',
+        '-path', '*/.gemini/antigravity-ide/conversations', '-o',
+        '-path', '*/.gemini/antigravity-backup/conversations',
+        '\\)', '-print', '\\)'
       ], deps);
     } catch (_) {
       continue;
@@ -158,7 +176,7 @@ function wslBridgeHomes(deps = {}) {
 function collectDshRowsFromWsl(home, deps = {}) {
   const root = `${home.homeDir.replace(/\/$/, '')}/.dsh/sessions`;
   const output = runWslBridgeCommand(home.distro, [
-    'find', root, '-type', 'f', '(', '-name', 'session.jsonl', '-o', '-name', 'session.jsonl.zstd', ')', '-print0'
+    'find', root, '-type', 'f', '\\(', '-name', 'session.jsonl', '-o', '-name', 'session.jsonl.zstd', '\\)', '-print0'
   ], deps);
   const rows = [];
   for (const filePath of output.split('\0').map((value) => value.trim()).filter(Boolean)) {
@@ -177,9 +195,16 @@ function collectDshRowsFromWsl(home, deps = {}) {
 
 const AGY_MODEL_SCRIPT = [
   'import glob,os,re,sqlite3,sys',
-  'rx=re.compile(r"(?<![A-Za-z0-9])gemini-[0-9][A-Za-z0-9._-]*",re.I)',
-  'enum=re.compile(r"MODEL_GOOGLE_GEMINI_([0-9_]+)_(FLASH|PRO)(?:_([A-Z]+))?",re.I)',
-  'for p in glob.glob(os.path.join(sys.argv[1],"*.db")):',
+  'rx=re.compile(r"(?<![A-Za-z0-9])(?:gemini|claude|gpt|deepseek|qwen|mistral|llama)-[A-Za-z0-9][A-Za-z0-9._-]*",re.I)',
+  'enum=re.compile(r"MODEL_(GOOGLE_GEMINI|ANTHROPIC_CLAUDE|OPENAI_GPT|DEEPSEEK|QWEN|MISTRAL|META_LLAMA)_([A-Z0-9_]+)",re.I)',
+  'prefix={"GOOGLE_GEMINI":"gemini","ANTHROPIC_CLAUDE":"claude","OPENAI_GPT":"gpt","DEEPSEEK":"deepseek","QWEN":"qwen","MISTRAL":"mistral","META_LLAMA":"llama"}',
+  'def enum_model(m):',
+  '  parts=m.group(2).lower().split("_"); version=[]',
+  '  while parts and parts[0].isdigit() and len(version)<2: version.append(parts.pop(0))',
+  '  body="-".join(([".".join(version)] if version else [])+parts)',
+  '  return (prefix.get(m.group(1).upper(),"")+"-"+body) if body else ""',
+  'for root in sys.argv[1:]:',
+  ' for p in glob.glob(os.path.join(root,"*.db")):',
   '  try:',
   '    db=sqlite3.connect("file:"+p+"?mode=ro",uri=True); vals=[]',
   '    for t in ("gen_metadata","executor_metadata","steps"):',
@@ -191,15 +216,17 @@ const AGY_MODEL_SCRIPT = [
   '        if m: vals.append(m.group(0).lower())',
   '        else:',
   '          m=enum.search(s)',
-  '          if m: vals.append("gemini-"+m.group(1).replace("_",".")+"-"+m.group(2).lower()+("-"+m.group(3).lower() if m.group(3) else ""))',
+  '          if m: vals.append(enum_model(m))',
   '    db.close()',
   '    if vals: print(os.path.basename(p)[:-3]+"\\t"+vals[0])',
   '  except Exception: pass'
 ].join('\n');
 
 function collectAntigravityModelsFromWsl(home, deps = {}) {
-  const root = `${home.homeDir.replace(/\/$/, '')}/.gemini/antigravity-cli/conversations`;
-  const output = runWslBridgeCommand(home.distro, ['python3', '-c', AGY_MODEL_SCRIPT, root], deps);
+  const homeDir = home.homeDir.replace(/\/$/, '');
+  const roots = ['antigravity-cli', 'antigravity', 'antigravity-ide', 'antigravity-backup']
+    .map((name) => homeDir + '/.gemini/' + name + '/conversations');
+  const output = runWslBridgeCommand(home.distro, ['python3', '-c', AGY_MODEL_SCRIPT, ...roots], deps);
   const models = new Map();
   for (const line of output.split(/\r?\n/)) {
     const [sessionId, model] = line.trim().split('\t');
@@ -491,7 +518,8 @@ async function collectWslUsage(options = {}, deps = {}) {
     if (tracked.has('antigravity') && homeDataClients.includes('antigravity')) {
       try {
         antigravityModels = collectAntigravity({
-          roots: [wslHomePath(home, '.gemini/antigravity-cli/conversations')]
+          roots: ['antigravity-cli', 'antigravity', 'antigravity-ide', 'antigravity-backup']
+            .map((name) => wslHomePath(home, '.gemini/' + name + '/conversations'))
         });
       } catch (error) {
         if (typeof logger === 'function') logger(`wsl antigravity model enrichment failed for ${home}: ${error.message}`);

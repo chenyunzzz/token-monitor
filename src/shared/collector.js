@@ -1589,7 +1589,7 @@ async function collectUsageOnce(options) {
     }
     if (trackedClientSet.has('antigravity') && (!targetRequested || targetClients.includes('antigravity'))) {
       try {
-        antigravityCliModels = collectAntigravityCliModels({ roots: [antigravityCliDataDir()] });
+        antigravityCliModels = collectAntigravityCliModels({ roots: antigravityCliDataDirs() });
       } catch (err) {
         if (typeof options.logger === 'function') options.logger(`antigravity model enrichment failed: ${err.message}`);
       }
@@ -1898,6 +1898,9 @@ async function collectUsageOnce(options) {
     projectsEnabled,
     trackedClients: normalizedClients ? normalizedClients.split(',') : [],
     clientStatus: deriveClientStatus(normalizedClients, allTime, { sourceChecks }),
+    ...(String(platformValue).toLowerCase().startsWith('win32') && wslBundle?.allTime?.totalTokens > 0
+      ? { sourcePeriods: { wsl: wslBundle } }
+      : {}),
     wslStatus,
     periodWindows: computePeriodWindows(collectedAt),
     historyAvailable: options.historyEnabled !== false,
@@ -2519,6 +2522,12 @@ function antigravityCliDataDir() {
   return path.join(geminiHome, 'antigravity-cli', 'conversations');
 }
 
+function antigravityCliDataDirs() {
+  const geminiHome = process.env.GEMINI_CLI_HOME || path.join(os.homedir(), '.gemini');
+  return ['antigravity-cli', 'antigravity', 'antigravity-ide', 'antigravity-backup']
+    .map((name) => path.join(geminiHome, name, 'conversations'));
+}
+
 // Watch roots that feed a self-sync, keyed by client. Antigravity's IDE cache is
 // written by our sync and must stay watch-excluded, but the native session roots
 // are read-only inputs to that sync (tokscale only ever readdir/stats them —
@@ -2554,9 +2563,9 @@ function watchClientRootsForClients(clientsCsv) {
   // so it is also safe to watch and shares the umbrella client id. The filter
   // expands that id to antigravity-cli when the targeted scan runs.
   const enabled = new Set(String(clientsCsv || '').split(',').map((value) => value.trim().toLowerCase()).filter(Boolean));
-  const antigravityCliDir = antigravityCliDataDir();
-  if (enabled.has('antigravity') && dirExists(antigravityCliDir)) {
-    rootsByClient.antigravity = [...new Set([...(rootsByClient.antigravity || []), antigravityCliDir])];
+  const antigravityCliDirs = antigravityCliDataDirs().filter(dirExists);
+  if (enabled.has('antigravity') && antigravityCliDirs.length > 0) {
+    rootsByClient.antigravity = [...new Set([...(rootsByClient.antigravity || []), ...antigravityCliDirs])];
   }
   if (enabled.has('reasonix')) {
     const nativeRoots = reasonixNativeSessionWatchRoots();
@@ -2836,7 +2845,7 @@ function watchPolicyEntries(clientsCsv) {
     ...Object.entries(candidates)
       .filter(([client]) => client !== 'copilot' && !SELF_SYNCED_CLIENTS.has(client))
       .flatMap(([client, dirs]) => dirs.filter((dir) => !(claimed.get(client) || EMPTY_SET).has(dir))),
-    ...(antigravityEnabled && dirExists(antigravityCliDataDir()) ? [antigravityCliDataDir()] : [])
+    ...(antigravityEnabled ? antigravityCliDataDirs().filter(dirExists) : [])
   ];
   for (const root of new Set(recursive.map(canonicalRoot))) {
     entries.push({ root, prefix: root + path.sep, policy: KEEP_EVERYTHING });

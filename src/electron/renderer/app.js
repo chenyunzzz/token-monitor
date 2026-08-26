@@ -2096,8 +2096,144 @@ function modelTreeEnvironmentLabel(device) {
   return deviceBreakdownApi.devicePlatformLabel(device?.platform, device?.osName, device?.osVersion) || 'Device';
 }
 
+const SOURCE_PERIOD_MAP_FIELDS = [
+  'clients', 'models', 'clientModels', 'providerModels', 'clientProviderModels'
+];
+
+function subtractSourceMap(base, source) {
+  const result = {};
+  const keys = new Set([...Object.keys(base || {}), ...Object.keys(source || {})]);
+  for (const key of keys) {
+    const baseValue = base?.[key];
+    const sourceValue = source?.[key];
+    if ((baseValue && typeof baseValue === 'object') || (sourceValue && typeof sourceValue === 'object')) {
+      const nested = subtractSourceMap(baseValue, sourceValue);
+      if (Object.keys(nested).length > 0) result[key] = nested;
+      continue;
+    }
+    const value = Math.max(0, (Number(baseValue) || 0) - (Number(sourceValue) || 0));
+    if (value > 0) result[key] = value;
+  }
+  return result;
+}
+
+function addSourceMap(base, addition) {
+  const result = { ...(base || {}) };
+  for (const [key, value] of Object.entries(addition || {})) {
+    if (value && typeof value === 'object') {
+      result[key] = addSourceMap(result[key], value);
+    } else {
+      result[key] = (Number(result[key]) || 0) + (Number(value) || 0);
+    }
+  }
+  return result;
+}
+
+function sourceMapForClients(value, clients) {
+  const allowed = new Set(clients);
+  return Object.fromEntries(Object.entries(value || {})
+    .filter(([key]) => allowed.has(key))
+    .map(([key, entry]) => [key, entry && typeof entry === 'object' ? { ...entry } : entry]));
+}
+
+function sourcePeriodForClients(period, clients) {
+  const result = { ...(period || {}) };
+  for (const field of SOURCE_PERIOD_MAP_FIELDS) result[field] = sourceMapForClients(period?.[field], clients);
+  result.totalTokens = clients.reduce((sum, client) => sum + (Number(period?.clients?.[client]) || 0), 0);
+  result.costUsd = clients.reduce((sum, client) => sum + (Number(period?.clientCosts?.[client]) || 0), 0);
+  return result;
+}
+
+function sourcePeriodWithLiveWslResidual(mergedPeriod, sourcePeriod, wslClients) {
+  const clients = [...new Set(wslClients || [])];
+  if (clients.length === 0) return sourcePeriod;
+  const source = sourcePeriod || sourcePeriodForClients(mergedPeriod, clients);
+  const result = { ...source };
+  for (const field of SOURCE_PERIOD_MAP_FIELDS) {
+    const mergedClients = field === 'clients' ? clients : clients;
+    const residual = sourceMapForClients(
+      subtractSourceMap(mergedPeriod?.[field], source?.[field]),
+      mergedClients
+    );
+    result[field] = addSourceMap(source[field], residual);
+  }
+  const mergedTotal = clients.reduce((sum, client) => sum + (Number(mergedPeriod?.clients?.[client]) || 0), 0);
+  result.totalTokens = Math.max(Number(source.totalTokens || 0), mergedTotal);
+  return result;
+}
+
+function periodWithoutSource(period, source) {
+  if (!source || typeof source !== 'object') return period || {};
+  const result = { ...(period || {}) };
+  for (const field of SOURCE_PERIOD_MAP_FIELDS) result[field] = subtractSourceMap(period?.[field], source?.[field]);
+  result.totalTokens = Math.max(0, (Number(period?.totalTokens) || 0) - (Number(source.totalTokens) || 0));
+  result.costUsd = Math.max(0, (Number(period?.costUsd) || 0) - (Number(source.costUsd) || 0));
+  return result;
+}
+
+function modelSourceDevices(periodName = state.period) {
+  const devices = fixedPeriodDevices();
+  const result = [];
+  for (const device of devices) {
+    const mergedPeriod = device.periods?.[periodName] || {};
+    const sources = device.sourcePeriods || {};
+    const wslClients = device.wslStatus?.withData || [];
+    const sourceIds = new Set(Object.keys(sources));
+    if (wslClients.length > 0) sourceIds.add('wsl');
+    for (const sourceId of sourceIds) {
+      const sourcePeriods = sources[sourceId];
+      const sourcePeriod = sourcePeriodWithLiveWslResidual(
+        mergedPeriod,
+        sourcePeriods?.[periodName],
+        sourceId === 'wsl' ? wslClients : []
+      );
+      if (!sourcePeriod || (Number(sourcePeriod.totalTokens || 0) <= 0 && Number(sourcePeriod.costUsd || 0) <= 0)) continue;
+      result.push({
+        ...device,
+        deviceId: `${device.deviceId}:${sourceId}`,
+        platform: sourceId === 'wsl' ? 'linux-x64' : device.platform,
+        osName: sourceId === 'wsl' ? 'WSL' : device.osName,
+        periods: { [periodName]: sourcePeriod },
+        sourceId
+      });
+    }
+    const wslSource = sourcePeriodWithLiveWslResidual(mergedPeriod, sources.wsl?.[periodName], wslClients);
+    const hostPeriod = periodWithoutSource(mergedPeriod, wslSource);
+    if (Number(hostPeriod.totalTokens || 0) > 0 || Number(hostPeriod.costUsd || 0) > 0) {
+      result.push({ ...device, periods: { [periodName]: hostPeriod }, sourceId: 'windows' });
+    }
+  }
+  return result.length > 0 ? result : devices;
+}
+
+function modelSourceRowsForPeriod(periodName = state.period) {
+  const rows = [];
+  for (const device of modelSourceDevices(periodName)) {
+    const sourcePeriod = device.periods?.[periodName] || {};
+    const detail = deviceBreakdownApi.deviceBreakdownForPeriod(device, periodName, {
+      clientLabels,
+      clientColors,
+      fallbackColor: clientColors.default,
+      unattributedLabel: t('dashboard.tooltip.unclassified')
+    });
+    const environment = modelTreeEnvironmentLabel(device);
+    for (const tool of detail.tools) {
+      for (const model of tool.models) {
+        rows.push({
+          key: `${device.deviceId}/${tool.client}/${model.key}`,
+          name: `${environment} / ${tool.name} / ${model.name}`,
+          value: model.value,
+          color: modelColor(model.name),
+          sourcePeriod
+        });
+      }
+    }
+  }
+  return rows.sort((a, b) => b.value - a.value || a.name.localeCompare(b.name));
+}
+
 function modelTreeNodesForPeriod(period) {
-  const devices = fixedPeriodDevices()
+  const devices = modelSourceDevices(state.period)
     .map((device) => ({ device, period: device.periods?.[state.period] || {} }))
     .filter(({ period: source }) => Number(source.totalTokens || 0) > 0 || Number(source.costUsd || 0) > 0);
   const sources = devices.length > 0
@@ -2126,7 +2262,7 @@ function modelTreeNodesForPeriod(period) {
       unattributedLabel: t('dashboard.tooltip.unclassified')
     });
     const rootName = environmentCounts.get(environment) > 1
-      ? `${environment} / ${deviceLabel(device)}`
+      ? `${environment} / ${device.sourceId === 'wsl' ? 'Windows scan' : deviceLabel(device)}`
       : environment;
     nodes.push({
       key: rootKey,
@@ -6706,7 +6842,12 @@ function renderHomeLimitModule() {
 
 function renderHomeModelModule(period) {
   const { module, body } = homeModuleShell('model', t('home.models'), 'model');
-  const rows = homeOverviewApi.homeModelRows(modelRowsForPeriod(period), period?.totalTokens, 5);
+  const sourceRows = modelSourceRowsForPeriod(state.period);
+  const rows = homeOverviewApi.homeModelRows(
+    sourceRows.length > 0 ? sourceRows : modelRowsForPeriod(period),
+    period?.totalTokens,
+    5
+  );
   if (rows.length === 0) {
     const empty = document.createElement('div');
     empty.className = 'home-module-empty';

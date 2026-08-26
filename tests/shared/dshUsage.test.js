@@ -80,3 +80,25 @@ test('dsh parser removes replayed rows, fork seed, and includes history', () => 
     fs.rmSync(root, { recursive: true, force: true });
   }
 });
+
+test('dsh parser fills unknown rows when a session has one known model', () => {
+  const text = [
+    JSON.stringify({ type: 'session', id: 'single-model' }),
+    JSON.stringify(record({ seq: 1, time: '2026-08-26T08:00:00Z', provider: 'opencode-go', model: 'deepseek-v4-flash', input: 10, output: 1, id: 'known' })),
+    JSON.stringify(record({ seq: 2, time: '2026-08-26T08:01:00Z', provider: 'opencode-go', model: '', input: 20, output: 2, id: 'unknown' }))
+  ].join('\n');
+  const rows = require('../../src/shared/dshUsage').parseDshUsageText(text, 'single-model/session.jsonl');
+  assert.equal(rows[1].model, 'deepseek-v4-flash');
+  assert.equal(rows[1].provider, 'opencode-go');
+});
+
+test('dsh parser keeps unknown rows when a session has multiple models', () => {
+  const text = [
+    JSON.stringify({ type: 'session', id: 'multi-model' }),
+    JSON.stringify(record({ seq: 1, time: '2026-08-26T08:00:00Z', provider: 'ollama', model: 'deepseek-v4-flash', input: 10, output: 1, id: 'first' })),
+    JSON.stringify(record({ seq: 2, time: '2026-08-26T08:01:00Z', provider: 'opencode-go', model: 'deepseek-v4', input: 20, output: 2, id: 'second' })),
+    JSON.stringify(record({ seq: 3, time: '2026-08-26T08:02:00Z', provider: 'opencode-go', model: '', input: 30, output: 3, id: 'unknown' }))
+  ].join('\n');
+  const rows = require('../../src/shared/dshUsage').parseDshUsageText(text, 'multi-model/session.jsonl');
+  assert.equal(rows[2].model, 'unknown');
+});

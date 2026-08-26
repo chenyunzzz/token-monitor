@@ -64,11 +64,24 @@ test('deviceBreakdownForPeriod labels legacy Antigravity unknown models clearly'
   const result = deviceBreakdownForPeriod({ periods: { today: {
     totalTokens: 7,
     clients: { antigravity: 7 },
+    clientModels: { antigravity: { 'auto-detected': 7 } },
     clientProviderModels: { antigravity: { antigravity: { unknown: 7 } } }
   } } }, 'today');
 
   assert.deepEqual(result.tools[0].models, [
-    { key: 'provider:antigravity/unknown', name: 'antigravity / auto-detected', value: 7 }
+    { key: 'provider:antigravity/auto-detected', name: 'antigravity / auto-detected', value: 7 }
+  ]);
+});
+
+test('deviceBreakdownForPeriod folds a DSH unknown remainder into its sole known model', () => {
+  const result = deviceBreakdownForPeriod({ periods: { today: {
+    totalTokens: 100,
+    clients: { dsh: 100 },
+    clientModels: { dsh: { 'deepseek-v4-flash': 98, unknown: 2 } }
+  } } }, 'today');
+
+  assert.deepEqual(result.tools[0].models, [
+    { key: 'deepseek-v4-flash', name: 'deepseek-v4-flash', value: 100 }
   ]);
 });
 
