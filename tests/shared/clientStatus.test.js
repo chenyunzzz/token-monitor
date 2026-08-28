@@ -83,8 +83,12 @@ test('clientDataDirPresence detects Antigravity via the CLI conversations dir', 
   const cliDir = path.join(base, '.gemini', 'antigravity-cli', 'conversations');
   const originalHome = os.homedir;
   const prevGeminiHome = process.env.GEMINI_CLI_HOME;
+  const prevAppData = process.env.APPDATA;
+  const prevLocalAppData = process.env.LOCALAPPDATA;
   try {
     delete process.env.GEMINI_CLI_HOME;
+    process.env.APPDATA = path.join(base, 'AppData');
+    process.env.LOCALAPPDATA = path.join(base, 'LocalAppData');
     os.homedir = () => base;
     assert.equal(clientDataDirPresence('antigravity').antigravity, false);
     fs.mkdirSync(cliDir, { recursive: true });
@@ -95,6 +99,10 @@ test('clientDataDirPresence detects Antigravity via the CLI conversations dir', 
     os.homedir = originalHome;
     if (prevGeminiHome === undefined) delete process.env.GEMINI_CLI_HOME;
     else process.env.GEMINI_CLI_HOME = prevGeminiHome;
+    if (prevAppData === undefined) delete process.env.APPDATA;
+    else process.env.APPDATA = prevAppData;
+    if (prevLocalAppData === undefined) delete process.env.LOCALAPPDATA;
+    else process.env.LOCALAPPDATA = prevLocalAppData;
     fs.rmSync(base, { recursive: true, force: true });
   }
 });

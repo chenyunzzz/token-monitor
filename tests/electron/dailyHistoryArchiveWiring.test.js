@@ -53,7 +53,7 @@ test('the headless agent retains daily history without mutating storage in dry-r
 });
 
 test('a non-dry-run one-shot agent claims archive ownership before collecting', () => {
-  const ownership = agent.indexOf('if (!dryRun) registerPidFile(');
+  const ownership = agent.search(/if \(!dryRun\s*&&\s*!?registerPidFile\(/);
   const oneShot = agent.indexOf('if (once) {');
   assert.ok(ownership >= 0);
   assert.ok(oneShot >= 0);
