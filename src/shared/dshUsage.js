@@ -10,8 +10,11 @@ const path = require('node:path');
 const {
   decodeSessionText,
   dshSessionFiles,
+  readDshSessionHeader,
   resolveDshSessionsRoot
 } = require('./dshSessionFiles');
+
+const DSH_TAIL_CHUNK_BYTES = 1024 * 1024;
 
 function numberValue(value) {
   const parsed = Number(value || 0);
@@ -119,7 +122,8 @@ function sessionIdFromFile(filePath) {
   return path.basename(path.dirname(filePath)) || 'unknown';
 }
 
-function parseDshUsageText(text, filePath = '') {
+function parseDshUsageText(text, filePath = '', options = {}) {
+  const sinceMs = Math.max(0, Number(options.sinceMs || 0));
   const rows = [];
   const seen = new Set();
   let sessionId = sessionIdFromFile(filePath);
@@ -141,7 +145,7 @@ function parseDshUsageText(text, filePath = '') {
     if (record?.type !== 'assistant/message' && record?.type !== 'compaction/summary') continue;
     const usage = usageFromRecord(record);
     const time = timestampMs(record?.time);
-    if (!usage || !time) continue;
+    if (!usage || !time || (sinceMs && time < sinceMs)) continue;
     const { model, provider, message } = sourceValue(record);
     const messageId = String(message?.id || '').trim();
     const identity = messageId ? `msg:${messageId}` : (sequence === null ? `time:${time}` : `seq:${sequence}`);
@@ -167,9 +171,68 @@ function parseDshUsageText(text, filePath = '') {
   return fillSessionModelGaps(rows);
 }
 
-function parseDshUsageFile(filePath) {
+function recordTimeMs(line) {
   try {
-    return parseDshUsageText(decodeSessionText(filePath, fs.readFileSync(filePath)), filePath);
+    const record = JSON.parse(line);
+    return timestampMs(record?.time);
+  } catch (_) {
+    return 0;
+  }
+}
+
+// DSH transcripts are append-only. During a today-only refresh, read backwards
+// in bounded chunks until the first record before the requested boundary. This
+// keeps a long-lived plain JSONL session from becoming a full-size temporary
+// string on every watch event while retaining all records that can affect today.
+function readJsonlSince(filePath, sinceMs) {
+  let fd;
+  try {
+    fd = fs.openSync(filePath, 'r');
+    const size = fs.fstatSync(fd).size;
+    if (size <= 0) return '';
+    const parts = [];
+    let offset = size;
+    let carry = '';
+    let reachedBoundary = false;
+    while (offset > 0 && !reachedBoundary) {
+      const start = Math.max(0, offset - DSH_TAIL_CHUNK_BYTES);
+      const buffer = Buffer.alloc(offset - start);
+      fs.readSync(fd, buffer, 0, buffer.length, start);
+      const lines = `${buffer.toString('utf8')}${carry}`.split(/\r?\n/);
+      carry = start > 0 ? lines.shift() || '' : '';
+      const selected = [];
+      for (const line of lines) {
+        if (!line.trim()) continue;
+        selected.push(line);
+        const time = recordTimeMs(line);
+        if (time && time < sinceMs) reachedBoundary = true;
+      }
+      if (selected.length > 0) parts.unshift(selected.join('\n'));
+      offset = start;
+    }
+    return parts.join('\n');
+  } finally {
+    if (fd !== undefined) {
+      try { fs.closeSync(fd); } catch (_) {}
+    }
+  }
+}
+
+function parseDshUsageFile(filePath, options = {}) {
+  try {
+    const sinceMs = Math.max(0, Number(options.sinceMs || 0));
+    if (sinceMs && filePath.endsWith('.jsonl')) {
+      const stat = fs.statSync(filePath);
+      if (stat.mtimeMs < sinceMs) return [];
+      const header = readDshSessionHeader(filePath);
+      const tail = readJsonlSince(filePath, sinceMs);
+      return parseDshUsageText(
+        `${header ? `${JSON.stringify(header)}\n` : ''}${tail}`,
+        filePath,
+        options
+      );
+    }
+    return parseDshUsageText(decodeSessionText(filePath, fs.readFileSync(filePath)), filePath, options);
   } catch (_) {
     return [];
   }
@@ -185,7 +248,7 @@ function collectDshRows(options = {}) {
     })];
   const rows = [];
   for (const root of roots.filter(Boolean)) {
-    for (const filePath of dshSessionFiles(root)) rows.push(...parseDshUsageFile(filePath));
+      for (const filePath of dshSessionFiles(root)) rows.push(...parseDshUsageFile(filePath, options));
   }
   return rows;
 }

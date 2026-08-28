@@ -81,11 +81,11 @@ test('dashboard history is gated by the historyEnabled setting', () => {
   assert.match(main, /usageConfigFromSettings\(settings, \{/);
 });
 
-test('agent history collection defaults to enabled, matching the widget', () => {
+test('headless agent keeps expensive history collection opt-in', () => {
   const agent = read('src', 'agent', 'agent.js');
   const envExample = read('.env.example');
   const configDoc = read('docs', 'configuration.md');
-  assert.match(agent, /TOKEN_MONITOR_HISTORY_ENABLED,\s*true\)/);
+  assert.match(agent, /TOKEN_MONITOR_HISTORY_ENABLED,\s*false\)/);
   assert.doesNotMatch(envExample, /TOKEN_MONITOR_HISTORY_ENABLED=0/);
   assert.match(configDoc, /TOKEN_MONITOR_HISTORY_ENABLED=/);
 });

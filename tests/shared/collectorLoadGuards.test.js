@@ -67,6 +67,181 @@ function wslBundleWith(client, tokens) {
   return { today: period(), month: period(), allTime: period() };
 }
 
+test('collectUsageOnce includes Codex profile sessions with the profile as provider', async () => {
+  const tmp = withTmpHome([
+    path.join('.codex', 'sessions'),
+    path.join('.codex', 'profiles', 'google', 'sessions')
+  ]);
+  const { collectUsageOnce } = freshCollector();
+  const calls = [];
+  try {
+    const summary = await collectUsageOnce({
+      clients: 'codex',
+      homeDir: tmp,
+      platform: 'linux',
+      wslScanEnabled: false,
+      historyEnabled: false,
+      projectsEnabled: false,
+      runTokscale: async (input) => {
+        calls.push(input);
+        const isProfile = String(input.env?.CODEX_HOME || '').endsWith(path.join('.codex', 'profiles', 'google'));
+        return {
+          entries: [{
+            client: 'codex',
+            sessionId: isProfile ? 'google-session' : 'base-session',
+            model: isProfile ? 'gemini-3.7-flash' : 'gpt-5.6-sol',
+            provider: 'OpenAI',
+            input: 10,
+            output: 2,
+            cacheRead: 3,
+            messageCount: 1
+          }]
+        };
+      }
+    });
+    assert.equal(summary.today.totalTokens, 30);
+    assert.equal(summary.today.clientModels.codex['gemini-3.7-flash'], 15);
+    assert.equal(summary.today.clientProviderModels.codex.google['gemini-3.7-flash'], 15);
+    assert.equal(summary.today.clientProviderModels.codex.openai['gpt-5.6-sol'], 15);
+    assert.equal(calls.filter((input) => input.env?.CODEX_HOME).length, 3);
+  } finally {
+    delete require.cache[collectorPath];
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+test('headless aggregate collection avoids retaining session detail maps', async () => {
+  const { collectUsageOnce } = freshCollector();
+  const inputs = [];
+  const summary = await collectUsageOnce({
+    clients: 'codex',
+    allTimeSince: '2024-01-01',
+    historyEnabled: false,
+    projectsEnabled: false,
+    sessionDetailsEnabled: false,
+    wslScanEnabled: false,
+    runTokscale: async (input) => {
+      inputs.push(input);
+      return {
+        entries: [{
+          client: 'codex',
+          sessionId: 'large-session',
+          model: 'gemini-3.7-flash',
+          provider: 'cliproxyapi',
+          input: 10,
+          output: 2,
+          cacheRead: 3,
+          messageCount: 1
+        }]
+      };
+    }
+  });
+
+  assert.equal(summary.today.totalTokens, 15);
+  assert.equal(summary.today.clientProviderModels.codex.cliproxyapi['gemini-3.7-flash'], 15);
+  assert.deepEqual(Object.keys(summary.today.sessions), []);
+  assert.deepEqual(Object.keys(summary.month.sessions), []);
+  assert.deepEqual(Object.keys(summary.allTime.sessions), []);
+  assert.ok(inputs.length >= 3);
+  assert.ok(inputs.every((input) => input.groupBy === 'client,provider,model'));
+});
+
+test('separate Windows device owns only native Codex and never scans WSL', async () => {
+  const { collectUsageOnce } = freshCollector();
+  const tokscaleInputs = [];
+  let wslCalls = 0;
+  const summary = await collectUsageOnce({
+    clients: 'codex,antigravity,pi',
+    platform: 'win32',
+    separateWslDevice: true,
+    allTimeSince: '2024-01-01',
+    historyEnabled: false,
+    projectsEnabled: false,
+    runAntigravitySync: async () => {},
+    runTokscale: async (input) => {
+      tokscaleInputs.push(input);
+      return {
+        entries: [{
+          client: 'codex',
+          sessionId: 'native-codex',
+          model: 'gpt-5.6-sol',
+          input: 10,
+          output: 2,
+          cacheRead: 3,
+          messageCount: 1
+        }]
+      };
+    },
+    collectWslUsage: async () => {
+      wslCalls += 1;
+      throw new Error('WSL scan must be disabled for the separated Windows device');
+    },
+    probeWslState: () => {
+      throw new Error('WSL probe must be disabled for the separated Windows device');
+    }
+  });
+
+  assert.deepEqual(summary.trackedClients, ['codex']);
+  assert.deepEqual(summary.wslStatus, { state: 'disabled', detected: [], withData: [] });
+  assert.equal(wslCalls, 0);
+  assert.ok(tokscaleInputs.length > 0);
+  assert.ok(tokscaleInputs.every((input) => input.clients === 'codex'));
+});
+
+test('anchored local adapter refreshes only today for DSH and Proma', async () => {
+  const now = new Date();
+  const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  const todayKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+  const dshOptions = [];
+  const promaOptions = [];
+  const old = new Date(todayStart - 24 * 60 * 60 * 1000).toISOString();
+  const current = new Date(todayStart + 60 * 60 * 1000).toISOString();
+  const empty = emptyPeriod();
+  const { collectUsageOnce } = freshCollector();
+  const summary = await collectUsageOnce({
+    clients: 'dsh,proma',
+    targetClients: ['dsh', 'proma'],
+    now,
+    allTimeSince: '2020-01-01',
+    commandTimeoutMs: 1000,
+    historyEnabled: false,
+    projectsEnabled: false,
+    wslScanEnabled: false,
+    todayOnlyAnchor: {
+      dateKey: todayKey,
+      today: empty,
+      month: empty,
+      allTime: empty,
+      todayPartitions: { dsh: emptyPeriod(), proma: emptyPeriod() }
+    },
+    collectDshRows: (options) => {
+      dshOptions.push(options);
+      return [{
+        client: 'dsh', sessionId: 'today', model: 'gemini-3.7-flash',
+        input: 4, output: 2, cacheRead: 0, cacheWrite: 0, reasoning: 0,
+        totalTokens: 6, messageCount: 1, lastUsedAt: current, startedAt: current
+      }, {
+        client: 'dsh', sessionId: 'old', model: 'gemini-3.7-flash',
+        input: 100, output: 100, cacheRead: 0, cacheWrite: 0, reasoning: 0,
+        totalTokens: 200, messageCount: 1, lastUsedAt: old, startedAt: old
+      }];
+    },
+    collectPromaRows: (options) => {
+      promaOptions.push(options);
+      return [{ model: 'gemini-3.7-flash', input: 3, output: 1, cacheRead: 0, cacheWrite: 0, createdAt: todayStart + 2 * 60 * 60 * 1000 },
+        { model: 'gemini-3.7-flash', input: 100, output: 100, cacheRead: 0, cacheWrite: 0, createdAt: todayStart - 24 * 60 * 60 * 1000 }];
+    },
+    collectWslUsage: async () => ({ bundle: { today: emptyPeriod(), month: emptyPeriod(), allTime: emptyPeriod() }, detected: [] })
+  });
+
+  assert.equal(dshOptions.length, 1);
+  assert.equal(dshOptions[0].sinceMs, todayStart);
+  assert.equal(promaOptions.length, 1);
+  assert.equal(promaOptions[0].sinceMs, todayStart);
+  assert.equal(summary.today.clients.dsh, 6);
+  assert.equal(summary.today.clients.proma, 4);
+});
+
 test('watchPathsForClients excludes the tokscale cache dirs our own syncs write', () => {
   const tmp = withTmpHome([
     path.join('.claude', 'projects'),
@@ -2403,9 +2578,34 @@ test('collectUsageOnce runs the three tokscale scans serially, not concurrently'
   }
 });
 
-test('collector exposes no watch-cooldown knob (refresh cadence is debounce-only)', () => {
-  const collector = freshCollector();
-  assert.equal(collector.watchDelayMs, undefined);
+test('collector diagnostics expose the configured watch minimum interval', async () => {
+  const childProcess = require('node:child_process');
+  const originalSpawn = childProcess.spawn;
+  const calls = [];
+  childProcess.spawn = recordingSpawn(calls);
+  let handle = null;
+  try {
+    const { startCollector } = freshCollector();
+    handle = startCollector({
+      clients: 'claude',
+      allTimeSince: '2024-01-01',
+      commandTimeoutMs: 1000,
+      deviceId: 'test-device',
+      agentVersion: 'test',
+      intervalMs: 60 * 60 * 1000,
+      watchEnabled: false,
+      watchMinIntervalMs: 5000,
+      historyEnabled: false,
+      limitsEnabled: false,
+      anchorPersistenceEnabled: false
+    });
+    await waitForCondition(() => calls.length === 3);
+    assert.equal(handle.getDiagnostics().watchMinIntervalMs, 5000);
+  } finally {
+    if (handle) handle.stop();
+    childProcess.spawn = originalSpawn;
+    delete require.cache[collectorPath];
+  }
 });
 
 function waitForCondition(predicate, timeoutMs = 2000) {
@@ -2472,6 +2672,7 @@ test('a watch event during an in-flight tick re-arms the debounce instead of coa
       intervalMs: 60 * 60 * 1000,
       watchEnabled: true,
       watchDebounceMs: 10,
+      watchMinIntervalMs: 0,
       limitsEnabled: false,
       historyEnabled: false,
       onUpdate: (_summary, reason) => updates.push(reason)
@@ -2493,6 +2694,72 @@ test('a watch event during an in-flight tick re-arms the debounce instead of coa
     // would have run a full 3-scan tick with reason 'coalesced'.
     assert.equal(calls.length, 5);
     assert.ok(!updates.includes('coalesced'), `unexpected coalesced tick in: ${updates.join(', ')}`);
+  } finally {
+    if (handle) handle.stop();
+    childProcess.spawn = originalSpawn;
+    chokidar.watch = originalWatch;
+    os.homedir = originalHomedir;
+    if (originalSharedDir === undefined) delete process.env.TOKEN_MONITOR_SHARED_DIR;
+    else process.env.TOKEN_MONITOR_SHARED_DIR = originalSharedDir;
+    delete require.cache[collectorPath];
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+test('watch events during the minimum interval coalesce into one later scan', async () => {
+  const tmp = withTmpHome([path.join('.claude', 'projects')]);
+  const originalHomedir = os.homedir;
+  const originalSharedDir = process.env.TOKEN_MONITOR_SHARED_DIR;
+  os.homedir = () => tmp;
+  process.env.TOKEN_MONITOR_SHARED_DIR = tmp;
+
+  const chokidar = require('chokidar');
+  const originalWatch = chokidar.watch;
+  let watchHandler = null;
+  chokidar.watch = () => ({
+    on: (event, handler) => { if (event === 'all') watchHandler = handler; },
+    close: () => {}
+  });
+
+  const childProcess = require('node:child_process');
+  const originalSpawn = childProcess.spawn;
+  const calls = [];
+  childProcess.spawn = recordingSpawn(calls);
+
+  let handle = null;
+  try {
+    const { startCollector } = freshCollector();
+    const updates = [];
+    handle = startCollector({
+      clients: 'claude',
+      allTimeSince: '2024-01-01',
+      commandTimeoutMs: 5000,
+      deviceId: 'test-device',
+      agentVersion: 'test',
+      intervalMs: 60 * 60 * 1000,
+      watchEnabled: true,
+      watchDebounceMs: 10,
+      watchMinIntervalMs: 100,
+      historyEnabled: false,
+      limitsEnabled: false,
+      onUpdate: (_summary, reason) => updates.push(reason)
+    });
+
+    await waitForCondition(() => updates.length === 1);
+    assert.ok(watchHandler, 'watcher handler captured');
+    assert.equal(calls.length, 3);
+
+    watchHandler('change', '/fake/session.jsonl');
+    await waitForCondition(() => calls.length === 4);
+    await waitForCondition(() => updates.length === 2);
+
+    watchHandler('change', '/fake/session.jsonl');
+    watchHandler('change', '/fake/session.jsonl');
+    await new Promise((resolve) => { setTimeout(resolve, 45); });
+    assert.equal(calls.length, 4, 'events inside the cooldown do not launch another scan');
+
+    await waitForCondition(() => calls.length === 5, 500);
+    assert.equal(updates.length, 3);
   } finally {
     if (handle) handle.stop();
     childProcess.spawn = originalSpawn;
@@ -4301,7 +4568,8 @@ test('Tokscale headless capture roots are optional only while they are the defau
     // The panel-facing list drops them while they are absent...
     assert.deepEqual(visibleDiagnosticRoots('codex').codex.map((root) => root.dir), [
       path.join(tmp, '.codex', 'sessions'),
-      path.join(tmp, '.codex', 'archived_sessions')
+      path.join(tmp, '.codex', 'archived_sessions'),
+      path.join(tmp, '.codex', 'profiles')
     ]);
 
     // ...and stops dropping one the moment it exists, because by then it is
@@ -4310,6 +4578,7 @@ test('Tokscale headless capture roots are optional only while they are the defau
     assert.deepEqual(visibleDiagnosticRoots('codex').codex.map((root) => root.dir), [
       path.join(tmp, '.codex', 'sessions'),
       path.join(tmp, '.codex', 'archived_sessions'),
+      path.join(tmp, '.codex', 'profiles'),
       capture
     ]);
     fs.rmSync(capture, { recursive: true, force: true });

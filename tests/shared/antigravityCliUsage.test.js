@@ -4,9 +4,11 @@ const assert = require('node:assert/strict');
 const test = require('node:test');
 
 const {
+  buildAntigravityPeriods,
   collectAntigravityCliModels,
   enrichAntigravityJson,
-  modelCandidates
+  modelCandidates,
+  parseAntigravityUsageText
 } = require('../../src/shared/antigravityCliUsage');
 
 test('modelCandidates prefers canonical Gemini ids found in agy protobuf blobs', () => {
@@ -68,4 +70,36 @@ test('enrichAntigravityJson keeps unknown when discovered sessions use different
     ['def', 'gemini-3.7-flash']
   ]));
   assert.equal(result.entries[0].model, 'unknown');
+});
+
+test('parseAntigravityUsageText preserves token components and normalizes timestamps', () => {
+  const rows = parseAntigravityUsageText([
+    'abc\tgemini-3.7-flash-high\t2026-08-27T10:00:00Z\t100\t20\t300\t4',
+    'abc\tgemini-3.7-flash-high\t2026-08-27T10:01:00Z\t0\t0\t0\t0'
+  ].join('\n'));
+  assert.deepEqual(rows, [{
+    client: 'antigravity-cli',
+    provider: 'antigravity',
+    sessionId: 'abc',
+    model: 'gemini-3.7-flash-high',
+    input: 100,
+    output: 20,
+    cacheRead: 300,
+    cacheWrite: 4,
+    messageCount: 1,
+    startedAt: '2026-08-27T10:00:00.000Z',
+    lastUsedAt: '2026-08-27T10:00:00.000Z'
+  }]);
+});
+
+test('buildAntigravityPeriods filters rows by local day, month, and all-time boundary', () => {
+  const rows = [
+    { sessionId: 'today', lastUsedAt: '2026-08-27T12:00:00Z' },
+    { sessionId: 'month', lastUsedAt: '2026-08-02T12:00:00Z' },
+    { sessionId: 'old', lastUsedAt: '2026-07-31T12:00:00Z' }
+  ];
+  const periods = buildAntigravityPeriods({ now: new Date('2026-08-27T18:00:00Z'), allTimeSince: '2026-08-01', rows });
+  assert.deepEqual(periods.today.entries.map((row) => row.sessionId), ['today']);
+  assert.deepEqual(periods.month.entries.map((row) => row.sessionId), ['today', 'month']);
+  assert.deepEqual(periods.allTime.entries.map((row) => row.sessionId), ['today', 'month']);
 });

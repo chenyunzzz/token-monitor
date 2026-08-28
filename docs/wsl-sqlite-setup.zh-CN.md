@@ -45,6 +45,8 @@ TOKEN_MONITOR_DEVICE_ID=wsl-agent
 TOKEN_MONITOR_CLIENTS=opencode,hermes,zcode
 # 可选：客户端只保存裸模型名时，显式补充代理归属；不要靠模型名猜测
 TOKEN_MONITOR_PROVIDER_HINTS={"pi/deepseek-v4-flash":"cliproxyapi","dsh/deepseek-v4-flash":"sub2api"}
+# 低资源模式默认自动启用：定时扫描，不启用递归文件监听。
+# 只有需要接近实时的文件事件时才设置 TOKEN_MONITOR_WATCH=1；这会增加常驻资源。
 ```
 
 `TOKEN_MONITOR_DEVICE_ID` 必须与 Windows widget 的设备 ID 不同。Hub 会把相同 ID 当作同一台设备，后发送的记录会覆盖前一条。

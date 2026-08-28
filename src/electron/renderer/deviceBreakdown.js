@@ -1,11 +1,13 @@
 'use strict';
 
 (function exposeDeviceBreakdown(root, factory) {
-  const api = factory();
+  const api = factory(root);
   if (typeof module === 'object' && module.exports) module.exports = api;
   if (root) root.TokenMonitorDeviceBreakdown = api;
-})(typeof window !== 'undefined' ? window : null, function createDeviceBreakdownApi() {
+})(typeof window !== 'undefined' ? window : null, function createDeviceBreakdownApi(root) {
   const UNATTRIBUTED_KEY = '__unattributed';
+  const providerPresentation = root?.TokenMonitorProviderPresentation
+    || (typeof require === 'function' ? require('../../shared/providerPresentation') : null);
 
   function positiveEntries(value) {
     return Object.entries(value || {})
@@ -14,16 +16,7 @@
   }
 
   function providerLabel(provider) {
-    const labels = {
-      'cli-proxy-api': 'CLIProxyAPI',
-      cliproxyapi: 'CLIProxyAPI',
-      'openai-compatible': 'OpenAI Compatible',
-      'opencode-go': 'OpenCode Go',
-      openrouter: 'OpenRouter',
-      ollama: 'Ollama',
-      sub2api: 'Sub2API'
-    };
-    return labels[provider] || provider;
+    return providerPresentation?.providerDisplayName(provider) || provider;
   }
 
   function providerModelLabel(provider, model) {
@@ -57,13 +50,27 @@
       const key = normalizedModelKey(client, model, soleKnownModel);
       legacyTotals.set(key, (legacyTotals.get(key) || 0) + value);
     }
+    const providerGroups = new Map();
+    for (const [rawProvider, models] of Object.entries(period.clientProviderModels?.[client] || {})) {
+      const provider = providerPresentation?.canonicalProviderId(rawProvider) || rawProvider;
+      const group = providerGroups.get(provider) || {};
+      for (const [model, value] of positiveEntries(models)) {
+        group[model] = (group[model] || 0) + value;
+      }
+      providerGroups.set(provider, group);
+    }
     const providerRows = [];
     const accountedByModel = new Map();
     const providerRowsByKey = new Map();
-    const providers = period.clientProviderModels?.[client] || {};
-    for (const [provider, models] of Object.entries(providers)) {
+    const providerKeysByModel = new Map();
+    for (const [provider, models] of providerGroups) {
       for (const [model, rawValue] of positiveEntries(models)) {
         const modelKey = normalizedModelKey(client, model, soleKnownModel);
+        if (provider !== 'unknown' && provider !== 'unclassified') {
+          const providers = providerKeysByModel.get(modelKey) || new Set();
+          providers.add(provider);
+          providerKeysByModel.set(modelKey, providers);
+        }
         const budget = legacyTotals.has(modelKey)
           ? Math.max(0, (legacyTotals.get(modelKey) || 0) - (accountedByModel.get(modelKey) || 0))
           : Math.max(0, clientValue - providerRows.reduce((sum, row) => sum + row.value, 0));
@@ -95,6 +102,16 @@
     for (const [modelKey, total] of legacyResiduals) {
       const residual = Math.max(0, total - (accountedByModel.get(modelKey) || 0));
       if (residual > 0) {
+        const providers = [...(providerKeysByModel.get(modelKey) || [])];
+        if (providers.length === 1) {
+          const provider = providers[0];
+          const key = `provider:${provider}/${modelKey}`;
+          const existing = providerRowsByKey.get(key);
+          if (existing) {
+            existing.value += residual;
+            continue;
+          }
+        }
         const label = legacyLabels.get(modelKey) || modelKey;
         rows.push({ key: label, name: label, value: residual });
       }

@@ -257,6 +257,71 @@ test('aggregateDevices merges project rollups and exposes incomplete-device diag
   });
 });
 
+test('aggregateDevices deduplicates Windows WSL scans when a same-host headless WSL agent reports them', () => {
+  const windowsWsl = {
+    today: {
+      totalTokens: 60,
+      clients: { pi: 60 },
+      clientModels: { pi: { 'deepseek-v4-flash:cloud': 60 } }
+    }
+  };
+  const aggregate = aggregateDevices([
+    {
+      deviceId: 'wsl-agent',
+      hostname: 'desktop',
+      platform: 'linux-x64',
+      agentRuntime: 'headless-agent',
+      today: { totalTokens: 50, clients: { pi: 50 }, clientModels: { pi: { 'deepseek-v4-flash:cloud': 50 } } }
+    },
+    {
+      deviceId: 'windows',
+      hostname: 'desktop',
+      platform: 'win32-x64',
+      today: { totalTokens: 70, clients: { codex: 10, pi: 60 }, clientModels: { codex: { 'gpt-5': 10 }, pi: { 'deepseek-v4-flash:cloud': 60 } } },
+      sourcePeriods: { wsl: windowsWsl }
+    }
+  ], 60000);
+
+  assert.equal(aggregate.periods.today.totalTokens, 70);
+  assert.deepEqual(aggregate.periods.today.clients, { pi: 60, codex: 10 });
+  const windows = aggregate.devices.find((device) => device.deviceId === 'windows');
+  assert.equal(windows.periods.today.totalTokens, 20);
+  assert.equal(windows.sourcePeriods.wsl.today.totalTokens, 10);
+  assert.deepEqual(windows.sourcePeriods.wsl.today.clients, { pi: 10 });
+});
+
+test('aggregateDevices preserves native Windows usage when WSL uses the same model and peer data is newer', () => {
+  const windowsWsl = {
+    today: {
+      totalTokens: 60,
+      clients: { pi: 60 },
+      clientModels: { pi: { 'deepseek-v4-flash:cloud': 60 } }
+    }
+  };
+  const aggregate = aggregateDevices([
+    {
+      deviceId: 'wsl-agent',
+      hostname: 'desktop',
+      platform: 'linux-x64',
+      agentRuntime: 'headless-agent',
+      today: { totalTokens: 80, clients: { pi: 80 }, clientModels: { pi: { 'deepseek-v4-flash:cloud': 80 } } }
+    },
+    {
+      deviceId: 'windows',
+      hostname: 'desktop',
+      platform: 'win32-x64',
+      today: { totalTokens: 100, clients: { pi: 100 }, clientModels: { pi: { 'deepseek-v4-flash:cloud': 100 } } },
+      sourcePeriods: { wsl: windowsWsl }
+    }
+  ], 60000);
+
+  const windows = aggregate.devices.find((device) => device.deviceId === 'windows');
+  assert.equal(windows.periods.today.totalTokens, 40);
+  assert.deepEqual(windows.periods.today.clients, { pi: 40 });
+  assert.deepEqual(windows.periods.today.clientModels, { pi: { 'deepseek-v4-flash:cloud': 40 } });
+  assert.equal(windows.sourcePeriods, undefined);
+});
+
 test('aggregateDevices exposes bounded session-detail diagnostics without changing totals', () => {
   const aggregate = aggregateDevices([
     {
@@ -953,6 +1018,13 @@ test('detectModel and detectProvider read nested metadata without stringifying o
   assert.equal(detectModel(row), 'deepseek-v4-flash');
   assert.equal(detectProvider(row), 'opencode-go');
   assert.notEqual(detectModel({ model: { providerID: 'opencode-go' } }), '[object object]');
+});
+
+test('detectProvider attributes provider-less Antigravity rows to Antigravity', () => {
+  assert.equal(
+    detectProvider({ client: 'antigravity-cli', model: 'gemini-3.7-flash-high' }),
+    'antigravity'
+  );
 });
 
 test('provider hints attribute bare proxy model ids without guessing unconfigured providers', () => {

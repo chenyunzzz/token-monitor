@@ -2820,6 +2820,19 @@ html.is-windows .settings-panel select option {
   display: flex;
   min-width: 0;
   flex-direction: column;
+  gap: 8px;
+}
+.model-tree-environment {
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid rgba(var(--line-rgb), 0.2);
+  border-radius: 7px;
+  background: rgba(var(--panel-rgb), 0.2);
+  box-shadow: 0 5px 16px rgba(0, 0, 0, 0.08);
+}
+.model-tree-environment.environment-wsl {
+  border-color: rgba(var(--accent-rgb), 0.24);
+  background: rgba(var(--accent-rgb), 0.055);
 }
 .model-tree-row {
   display: flex;
@@ -2839,9 +2852,23 @@ html.is-windows .settings-panel select option {
   outline: 2px solid rgba(var(--accent-rgb), 0.32);
   outline-offset: -2px;
 }
-.model-tree-row.level-1 { font-weight: 600; }
+.model-tree-row.level-1 {
+  min-height: 37px;
+  border-bottom-color: rgba(var(--line-rgb), 0.24);
+  background: rgba(var(--line-rgb), 0.075);
+  font-size: 12px;
+  font-weight: 650;
+}
+.model-tree-row.level-1:hover { background: rgba(var(--line-rgb), 0.11); }
 .model-tree-row.level-2 { color: var(--text); }
 .model-tree-row.level-3 { color: var(--muted); font-size: 11px; }
+.model-tree-row.level-4 {
+  border-bottom-color: rgba(var(--line-rgb), 0.08);
+  color: var(--muted);
+  font-size: 11px;
+}
+.model-tree-row.level-3 .model-tree-label { font-weight: 600; }
+.model-tree-environment > .model-tree-row:last-child { border-bottom: 0; }
 .model-tree-name {
   display: flex;
   min-width: 0;

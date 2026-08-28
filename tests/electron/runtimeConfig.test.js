@@ -111,6 +111,15 @@ test('usage config fingerprint dedupes raw settings with the same effective runt
   );
 });
 
+test('usage config carries the watch minimum interval into the collector', () => {
+  const config = usageConfigFromSettings({}, { watchMinIntervalMs: 5000 });
+  assert.equal(config.watchMinIntervalMs, 5000);
+  assert.notEqual(
+    usageConfigFingerprint(config),
+    usageConfigFingerprint(usageConfigFromSettings({}, { watchMinIntervalMs: 0 }))
+  );
+});
+
 test('every usage structural setting maps to an effective fingerprint change', () => {
   const cases = {
     clients: { clients: 'claude,codex' },

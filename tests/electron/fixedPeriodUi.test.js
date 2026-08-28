@@ -81,6 +81,94 @@ test('fixed-period menu follows the glass theme and keeps labels left aligned', 
   assert.match(i18n, /'dashboard\.tooltip\.unclassified': '未分類'/);
 });
 
+test('model source splitting preserves Windows usage when a WSL source is present', () => {
+  const app = read('app.js');
+  const start = app.indexOf('function subtractSourceMap(');
+  const end = app.indexOf('function modelSourceDevices(');
+  assert.ok(start >= 0 && end > start);
+  const helpers = app.slice(start, end);
+  const api = vm.runInNewContext(`const SOURCE_PERIOD_MAP_FIELDS = ['clients', 'models', 'clientModels', 'providerModels', 'clientProviderModels']; ${helpers}; ({ sourcePeriodWithLiveWslResidual, periodWithoutSource });`);
+  const merged = {
+    totalTokens: 100,
+    clients: { codex: 100 },
+    clientModels: { codex: { 'gemini-3.7-flash': 100 } }
+  };
+  const wsl = {
+    totalTokens: 60,
+    clients: { codex: 60 },
+    clientModels: { codex: { 'gemini-3.7-flash': 60 } }
+  };
+  const displayedWsl = api.sourcePeriodWithLiveWslResidual(merged, wsl, ['codex']);
+  const displayedWindows = api.periodWithoutSource(merged, displayedWsl);
+  assert.equal(displayedWsl.totalTokens, 60);
+  assert.equal(displayedWindows.totalTokens, 40);
+  assert.deepEqual(JSON.parse(JSON.stringify(displayedWindows.clients)), { codex: 40 });
+  assert.deepEqual(JSON.parse(JSON.stringify(displayedWindows.clientModels)), { codex: { 'gemini-3.7-flash': 40 } });
+});
+
+test('model source splitting does not infer WSL over Windows usage when a peer agent is present', () => {
+  const app = read('app.js');
+  const start = app.indexOf('function subtractSourceMap(');
+  const end = app.indexOf('function modelSourceRowsForPeriod(');
+  assert.ok(start >= 0 && end > start);
+  const helpers = app.slice(start, end);
+  const devices = [
+    {
+      deviceId: 'wsl-agent',
+      hostname: 'desktop',
+      platform: 'linux-x64',
+      agentRuntime: 'headless-agent',
+      periods: { today: { totalTokens: 80 } }
+    },
+    {
+      deviceId: 'windows',
+      hostname: 'desktop',
+      platform: 'win32-x64',
+      periods: { today: { totalTokens: 40, clients: { codex: 40 } } },
+      wslStatus: { withData: ['codex'] }
+    }
+  ];
+  const api = vm.runInNewContext(`const SOURCE_PERIOD_MAP_FIELDS = ['clients', 'models', 'clientModels', 'providerModels', 'clientProviderModels']; const state = { period: 'today' }; function fixedPeriodDevices() { return devices; } ${helpers}; ({ modelSourceDevices });`, { devices });
+  const sources = api.modelSourceDevices('today');
+  assert.equal(sources.some((device) => device.deviceId === 'windows:wsl'), false);
+  assert.equal(sources.find((device) => device.deviceId === 'windows').periods.today.totalTokens, 40);
+});
+
+test('model source rows merge identical environment/provider/model paths across WSL sources', () => {
+  const app = read('app.js');
+  const start = app.indexOf('function modelSourceRowsForPeriod(');
+  const end = app.indexOf('function modelTreeProviderGroups(');
+  assert.ok(start >= 0 && end > start);
+  const fn = app.slice(start, end);
+  const api = vm.runInNewContext(`
+    const state = { period: 'today' };
+    const clientLabels = { antigravity: 'Antigravity' };
+    const clientColors = { default: '#73bdf5' };
+    const deviceBreakdownApi = { deviceBreakdownForPeriod: (device) => device.detail };
+    const modelColor = () => '#73bdf5';
+    const modelTreeEnvironmentLabel = () => 'WSL';
+    const t = () => 'Unclassified';
+    function modelSourceDevices() { return devices; }
+    ${fn}
+    ({ modelSourceRowsForPeriod });
+  `, {
+    devices: [
+      { deviceId: 'windows:wsl', periods: { today: { totalTokens: 60 } }, detail: {
+        totalTokens: 60,
+        tools: [{ client: 'antigravity', name: 'Antigravity', models: [{ key: 'provider:antigravity/gemini-3.7-flash-high', name: 'antigravity / gemini-3.7-flash-high', value: 60 }] }]
+      } },
+      { deviceId: 'wsl-agent', periods: { today: { totalTokens: 40 } }, detail: {
+        totalTokens: 40,
+        tools: [{ client: 'antigravity', name: 'Antigravity', models: [{ key: 'provider:antigravity/gemini-3.7-flash-high', name: 'antigravity / gemini-3.7-flash-high', value: 40 }] }]
+      } }
+    ]
+  });
+  const rows = api.modelSourceRowsForPeriod('today');
+  assert.deepEqual(JSON.parse(JSON.stringify(rows.map(({ name, value }) => ({ name, value })))), [
+    { name: 'WSL / Antigravity / antigravity / gemini-3.7-flash-high', value: 100 }
+  ]);
+});
+
 test('the Settings default uses the standard title-control-description row', () => {
   const html = read('index.html');
   const css = read('styles.css');

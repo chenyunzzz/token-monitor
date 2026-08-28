@@ -44,6 +44,8 @@ TOKEN_MONITOR_SECRET=YOUR_SHARED_SECRET
 TOKEN_MONITOR_DEVICE_ID=wsl-agent
 TOKEN_MONITOR_CLIENTS=opencode,hermes,zcode
 TOKEN_MONITOR_PROVIDER_HINTS={"pi/deepseek-v4-flash":"cliproxyapi","dsh/deepseek-v4-flash":"sub2api"}
+# Low-resource headless defaults are automatic: interval scans, no recursive watcher.
+# Set TOKEN_MONITOR_WATCH=1 only when near-live file events are worth the resident cost.
 ```
 
 `TOKEN_MONITOR_DEVICE_ID` must differ from the Windows widget device ID. The hub treats matching IDs as the same device, so a duplicate ID would make the latest post replace the previous record.

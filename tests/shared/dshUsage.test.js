@@ -58,6 +58,23 @@ test('dsh usage parser preserves provider/model and counts reasoning once', () =
   }
 });
 
+test('dsh today refresh keeps current rows without loading old rows into the result', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'dsh-usage-'));
+  try {
+    const file = writeSession(root, 'today-only', [
+      { type: 'session', id: 'today-only', createdAt: Date.parse('2026-08-25T10:00:00Z') },
+      record({ seq: 1, time: '2026-08-25T10:00:00Z', provider: 'ollama', model: 'old-model', input: 1000, output: 1000, id: 'old' }),
+      record({ seq: 2, time: '2026-08-26T10:00:00Z', provider: 'ollama', model: 'today-model', input: 10, output: 5, id: 'today' })
+    ]);
+    const rows = parseDshUsageFile(file, { sinceMs: Date.parse('2026-08-26T00:00:00Z') });
+    assert.equal(rows.length, 1);
+    assert.equal(rows[0].model, 'today-model');
+    assert.equal(rows[0].totalTokens, 15);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test('dsh parser removes replayed rows, fork seed, and includes history', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'dsh-usage-'));
   try {

@@ -119,9 +119,10 @@ test('distroNamesFromEnvironment finds distro names in WSL UNC paths', () => {
     distroNamesFromEnvironment({
       REASONIX_HOME: '\\\\wsl$\\Ubuntu-24.04\\home\\u\\.reasonix',
       OTHER: '\\\\wsl.localhost\\Ubuntu-24.04\\home\\u\\.dsh',
+      LEGACY_OTHER: '\\\\wsl$\\Debian\\home\\u\\.codex',
       LOCAL: 'C:\\Users\\u'
     }),
-    ['Ubuntu-24.04']
+    ['Ubuntu-24.04', 'Debian']
   );
 });
 
@@ -190,6 +191,7 @@ test('wslUsageHomes checks the root home too', () => {
 test('wslUsageHomes returns [] when no distro is running', () => {
   const homes = wslUsageHomes({
     platform: 'win32',
+    env: {},
     exec: (cmd) => (cmd === 'reg' ? 'Lxss' : ''),
     readdirSync: () => [],
     existsSync: () => true
@@ -306,6 +308,34 @@ test('collectWslUsage passes every requested client to each discovered home', as
   for (const home of ['\\\\wsl$\\Ubuntu\\home\\alice', '\\\\wsl$\\Ubuntu\\home\\carol']) {
     assert.deepEqual(seenClientsPerHome[home], ['claude,zed', 'claude,zed', 'claude,zed']);
   }
+});
+
+test('collectWslUsage scans Codex profiles and labels their provider', async () => {
+  const home = '\\\\wsl$\\Ubuntu\\home\\u';
+  const profileRoot = `${home}\\.codex\\profiles`;
+  const calls = [];
+  const runTokscale = async ({ clients, flags, env }) => {
+    calls.push({ clients, flags, env });
+    const isProfile = String(env?.CODEX_HOME || '').endsWith('\\.codex\\profiles\\google');
+    return { entries: [{ client: 'codex', model: 'gemini-3.7-flash', input: isProfile ? 10 : 5, output: 0 }] };
+  };
+  const { bundle } = await collectWslUsage(
+    { clients: 'codex', trackedClients: 'codex', allTimeSince: '2025-01-01', commandTimeoutMs: 1000, runTokscale },
+    {
+      platform: 'win32',
+      exec: (cmd) => (cmd === 'reg' ? 'Lxss' : 'Ubuntu\n'),
+      readdirSync: (dir) => {
+        if (dir === '\\\\wsl$\\Ubuntu\\home') return ['u'];
+        if (dir === profileRoot) return [{ name: 'google', isDirectory: () => true }];
+        return [];
+      },
+      existsSync: (value) => value === `${home}\\.codex\\sessions`
+    }
+  );
+  assert.equal(bundle.today.totalTokens, 15);
+  assert.equal(bundle.today.clientProviderModels.codex.google['gemini-3.7-flash'], 10);
+  assert.equal(calls.filter((call) => call.env?.CODEX_HOME).length, 3);
+  assert.ok(calls.filter((call) => call.env?.CODEX_HOME).every((call) => !call.flags.includes('--home')));
 });
 
 test('collectWslUsage sums two homes per period', async () => {
@@ -457,27 +487,29 @@ test('collectWslUsage parses DSH-only WSL homes without calling tokscale', async
   assert.equal(bundle.allTime.clientProviderModels.dsh['opencode-go']['deepseek-v4-flash'], 10);
 });
 
-test('collectWslUsage enriches unknown Antigravity models from the matching WSL conversation id', async () => {
+test('collectWslUsage reads Antigravity usage from an UNC home through WSL', async () => {
   const home = '\\\\wsl$\\Ubuntu\\home\\u';
   const { bundle } = await collectWslUsage(
     {
       clients: 'antigravity',
       trackedClients: 'antigravity',
       allTimeSince: '2025-01-01',
-      collectAntigravityCliModels: () => new Map([['conversation-1', 'gemini-3.7-flash-high']]),
-      runTokscale: async ({ flags }) => ({
-        entries: [{ client: 'antigravity-cli', sessionId: 'conversation-1', model: 'unknown', provider: 'antigravity', input: flags.includes('--since') ? 30 : 10, output: 0, cost: 0 }]
-      })
+      now: new Date('2026-07-10T08:00:00.000Z'),
+      runTokscale: async () => ({ entries: [] })
     },
     {
       platform: 'win32',
-      exec: (cmd) => (cmd === 'reg' ? 'Lxss' : 'Ubuntu\n'),
+      exec: (cmd, args) => {
+        if (cmd === 'reg') return 'Lxss';
+        if (args.includes('python3')) return 'conversation-1\tgemini-3.7-flash-high\t2026-07-10T07:00:00Z\t30\t0\t0\t0\n';
+        return 'Ubuntu\n';
+      },
       readdirSync: () => ['u'],
       existsSync: (value) => value === `${home}\\.gemini\\antigravity-cli\\conversations`
     }
   );
-  assert.equal(bundle.allTime.providerModels.antigravity['gemini-3.7-flash-high'], 30);
-  assert.equal(bundle.allTime.providerModels.antigravity.unknown, undefined);
+  assert.equal(bundle.allTime.models['gemini-3.7-flash-high'], 30);
+  assert.equal(bundle.allTime.models.unknown, undefined);
 });
 
 test('collectWslUsage applies the cached Proma price to WSL rows', async () => {
@@ -539,6 +571,36 @@ test('collectWslUsage falls back to wsl.exe when the WSL share is unreadable', a
   assert.equal(result.bundle.allTime.clients.dsh, 10);
   assert.deepEqual(result.detected, ['dsh']);
   assert.ok(calls.some(([cmd, args]) => cmd === 'wsl.exe' && args.includes('cat')));
+});
+
+test('collectWslUsage reads Antigravity CLI usage through the WSL bridge', async () => {
+  const calls = [];
+  const deps = {
+    platform: 'win32',
+    exec: (cmd, args) => {
+      calls.push([cmd, args]);
+      if (cmd === 'reg') return 'Lxss';
+      if (cmd === 'wsl.exe' && args[0] === '--list') return 'Ubuntu\\n';
+      if (cmd === 'wsl.exe' && args.includes('find')) return '/home/u/.gemini/antigravity-cli/conversations\n';
+      if (cmd === 'wsl.exe' && args.includes('python3')) {
+        return 'conversation-1\tgemini-3.7-flash-high\t2026-08-27T10:00:00Z\t100\t20\t300\t4\n';
+      }
+      throw new Error(`unexpected command: ${cmd} ${args.join(' ')}`);
+    },
+    readdirSync: () => { throw new Error('UNC access denied'); },
+    existsSync: () => false
+  };
+  const result = await collectWslUsage({
+    clients: '',
+    trackedClients: 'antigravity',
+    allTimeSince: '2026-08-01',
+    now: new Date('2026-08-27T12:00:00Z')
+  }, deps);
+  assert.equal(result.bundle.today.totalTokens, 424);
+  assert.equal(result.bundle.allTime.clients.antigravity, 424);
+  assert.equal(result.bundle.allTime.models['gemini-3.7-flash-high'], 424);
+  assert.deepEqual(result.detected, ['antigravity']);
+  assert.ok(calls.some(([cmd, args]) => cmd === 'wsl.exe' && args.includes('python3')));
 });
 
 test('collectWslUsage logs and skips a home that throws, keeps others', async () => {

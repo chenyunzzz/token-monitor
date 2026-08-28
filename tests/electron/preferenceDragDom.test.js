@@ -566,7 +566,7 @@ test('session archive retention has its own setting separate from Trends', () =>
   assert.doesNotMatch(main, /sessionUsageArchiveCount:/);
   assert.match(main, /settings\?\.sessionUsageArchiveEnabled === false/);
   assert.match(main, /ipcMain\.handle\('sessionUsageArchive:clear'/);
-  assert.match(agent, /TOKEN_MONITOR_SESSION_USAGE_ARCHIVE_ENABLED,\s*true\)/);
+  assert.match(agent, /TOKEN_MONITOR_SESSION_USAGE_ARCHIVE_ENABLED,\s*false\)/);
   assert.match(preload, /clearSessionUsageArchive/);
   assert.doesNotMatch(app, /historyEnabled[\s\S]{0,120}sessionUsageArchiveEnabled|sessionUsageArchiveEnabled[\s\S]{0,120}historyEnabled/);
 });

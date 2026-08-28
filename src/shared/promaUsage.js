@@ -111,7 +111,10 @@ function collectSessionRows(filePath, options = {}) {
     row.messages = 1;
     collapsed.push(row);
   }
-  return collapsed;
+  const sinceMs = Math.max(0, Number(options.sinceMs || 0));
+  return sinceMs
+    ? collapsed.filter((row) => row.createdAt >= sinceMs || (row.createdAt === 0 && options.includeUndated === true))
+    : collapsed;
 }
 
 /**
@@ -165,7 +168,7 @@ function collectPromaRows(options = {}) {
     const sourceId = sourceNamespace(root);
     for (const filePath of jsonlFiles(root)) {
       try {
-        rows.push(...collectSessionRows(filePath, { sourceId }));
+        rows.push(...collectSessionRows(filePath, { ...options, sourceId }));
       } catch (_) {
         // skip unreadable files
       }

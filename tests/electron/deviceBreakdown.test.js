@@ -85,6 +85,39 @@ test('deviceBreakdownForPeriod folds a DSH unknown remainder into its sole known
   ]);
 });
 
+test('deviceBreakdownForPeriod folds provider-less model remainder into its sole provider', () => {
+  const result = deviceBreakdownForPeriod({ periods: { today: {
+    totalTokens: 100,
+    clients: { antigravity: 100 },
+    clientModels: { antigravity: { 'gemini-3.7-flash-high': 100 } },
+    clientProviderModels: { antigravity: { antigravity: { 'gemini-3.7-flash-high': 40 } } }
+  } } }, 'today');
+
+  assert.deepEqual(result.tools[0].models, [
+    { key: 'provider:antigravity/gemini-3.7-flash-high', name: 'antigravity / gemini-3.7-flash-high', value: 100 }
+  ]);
+});
+
+test('deviceBreakdownForPeriod keeps an ambiguous provider-less remainder unclassified', () => {
+  const result = deviceBreakdownForPeriod({ periods: { today: {
+    totalTokens: 100,
+    clients: { dsh: 100 },
+    clientModels: { dsh: { 'deepseek-v4-flash': 100 } },
+    clientProviderModels: {
+      dsh: {
+        ollama: { 'deepseek-v4-flash': 40 },
+        'opencode-go': { 'deepseek-v4-flash': 30 }
+      }
+    }
+  } } }, 'today');
+
+  assert.deepEqual(result.tools[0].models, [
+    { key: 'provider:ollama/deepseek-v4-flash', name: 'Ollama / deepseek-v4-flash', value: 40 },
+    { key: 'deepseek-v4-flash', name: 'deepseek-v4-flash', value: 30 },
+    { key: 'provider:opencode-go/deepseek-v4-flash', name: 'OpenCode Go / deepseek-v4-flash', value: 30 }
+  ]);
+});
+
 test('devicePlatformLabel appends OS versions without exposing architecture', () => {
   assert.equal(devicePlatformLabel('darwin-arm64', 'macOS', '26.0'), 'macOS 26.0');
   assert.equal(devicePlatformLabel('win32-x64', 'Windows 11', '24H2'), 'Windows 11 24H2');

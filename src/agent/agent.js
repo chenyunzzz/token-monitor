@@ -4,8 +4,8 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { defaultDeviceId, loadDotEnv, parseArgs, pidFilePath } = require('../shared/config');
 const { appVersion } = require('../shared/appVersion');
-const { clientsCsvForSetting } = require('../shared/clientTracking');
-const { normalizeHistoryIntervalMs } = require('../shared/collector');
+const { DEFAULT_CLIENTS, clientsCsvForSetting } = require('../shared/clientTracking');
+const { clientDataDirPresence, normalizeHistoryIntervalMs } = require('../shared/collector');
 const {
   normalizeLimitsRefreshMode,
   normalizeLimitsRefreshMs,
@@ -28,20 +28,69 @@ const args = parseArgs(process.argv.slice(2));
 const hubUrl = String(args.hub || args.hubUrl || process.env.TOKEN_MONITOR_HUB_URL || 'http://127.0.0.1:17321').replace(/\/$/, '');
 const secret = String(args.secret || process.env.TOKEN_MONITOR_SECRET || '').trim();
 const deviceId = String(args.device || args.deviceId || process.env.TOKEN_MONITOR_DEVICE_ID || defaultDeviceId());
-const intervalMs = Number(args.interval || args.intervalMs || process.env.TOKEN_MONITOR_INTERVAL_MS || 5 * 60 * 1000);
-const watchEnabled = String(args.watch ?? process.env.TOKEN_MONITOR_WATCH ?? '1') !== '0';
-const watchDebounceMs = Number(args.watchDebounceMs || process.env.TOKEN_MONITOR_WATCH_DEBOUNCE_MS || 1500);
-const clients = clientsCsvForSetting(args.clients ?? process.env.TOKEN_MONITOR_CLIENTS);
+// Headless agents commonly run beside several active CLI tools. Keep their
+// default refresh cost bounded while retaining near-live updates; users who
+// explicitly need the old cadence can opt into performance mode.
+const resourceMode = String(
+  args.resourceMode
+    ?? args['resource-mode']
+    ?? process.env.TOKEN_MONITOR_RESOURCE_MODE
+    ?? 'low'
+).trim().toLowerCase() === 'performance' ? 'performance' : 'low';
+const lowResourceMode = resourceMode === 'low';
+const intervalMs = Number(
+  args.interval
+    ?? args.intervalMs
+    ?? process.env.TOKEN_MONITOR_INTERVAL_MS
+    ?? (lowResourceMode ? 15 * 60 * 1000 : 5 * 60 * 1000)
+);
+// Recursive file watching is the largest resident cost on a headless WSL
+// machine: chokidar must retain one native watch/cache entry per directory in
+// every session tree. Low mode therefore uses the bounded interval loop as its
+// source of truth. An explicit TOKEN_MONITOR_WATCH=1 still opts back into live
+// events for users who accept that resident cost.
+const watchSetting = args.watch ?? process.env.TOKEN_MONITOR_WATCH;
+const watchEnabled = String(watchSetting ?? (lowResourceMode ? '0' : '1')) !== '0';
+const watchDebounceMs = Number(
+  args.watchDebounceMs
+    ?? process.env.TOKEN_MONITOR_WATCH_DEBOUNCE_MS
+    ?? (lowResourceMode ? 3000 : 1500)
+);
+const watchMinIntervalMs = Number(
+  args.watchMinIntervalMs
+    ?? process.env.TOKEN_MONITOR_WATCH_MIN_INTERVAL_MS
+    ?? (lowResourceMode ? 30 * 1000 : 5000)
+);
+const explicitClients = args.clients ?? process.env.TOKEN_MONITOR_CLIENTS;
+const detectedDefaultClients = Object.entries(clientDataDirPresence(DEFAULT_CLIENTS))
+  .filter(([, present]) => present)
+  .map(([client]) => client)
+  .join(',');
+const clients = explicitClients === undefined
+  ? clientsCsvForSetting(detectedDefaultClients, '')
+  : clientsCsvForSetting(explicitClients);
 const allTimeSince = String(args.since || args.allTimeSince || process.env.TOKEN_MONITOR_ALL_TIME_SINCE || '2024-01-01');
 const commandTimeoutMs = Number(args.timeoutMs || process.env.TOKEN_MONITOR_TOKSCALE_TIMEOUT_MS || 120 * 1000);
-const limitsEnabled = parseBoolean(args.limits ?? args.limitsEnabled ?? process.env.TOKEN_MONITOR_LIMITS_ENABLED, true);
-const limitProviders = parseLimitProviders(args.limitProviders ?? process.env.TOKEN_MONITOR_LIMIT_PROVIDERS).join(',');
+const explicitLimitProviders = args.limitProviders ?? process.env.TOKEN_MONITOR_LIMIT_PROVIDERS;
+const limitsEnabled = parseBoolean(
+  args.limits ?? args.limitsEnabled ?? process.env.TOKEN_MONITOR_LIMITS_ENABLED,
+  explicitLimitProviders !== undefined
+);
+const limitProviders = parseLimitProviders(explicitLimitProviders).join(',');
 const limitsRefreshMs = normalizeLimitsRefreshMs(args.limitsRefreshMs || process.env.TOKEN_MONITOR_LIMITS_REFRESH_MS);
 const limitsRefreshMode = normalizeLimitsRefreshMode(args.limitsRefreshMode || process.env.TOKEN_MONITOR_LIMITS_REFRESH_MODE);
-const historyEnabled = parseBoolean(args.history ?? args.historyEnabled ?? process.env.TOKEN_MONITOR_HISTORY_ENABLED, true);
+const historyEnabled = parseBoolean(args.history ?? args.historyEnabled ?? process.env.TOKEN_MONITOR_HISTORY_ENABLED, false);
 const projectsEnabled = parseBoolean(args.projects ?? args.projectsEnabled ?? process.env.TOKEN_MONITOR_PROJECTS_ENABLED, false);
-const sessionUsageArchiveEnabled = parseBoolean(args.sessionArchive ?? args.sessionUsageArchiveEnabled ?? process.env.TOKEN_MONITOR_SESSION_USAGE_ARCHIVE_ENABLED, true);
+const sessionUsageArchiveEnabled = parseBoolean(args.sessionArchive ?? args.sessionUsageArchiveEnabled ?? process.env.TOKEN_MONITOR_SESSION_USAGE_ARCHIVE_ENABLED, false);
+const sessionDetailsEnabled = parseBoolean(
+  args.sessionDetails ?? args.sessionDetailsEnabled ?? process.env.TOKEN_MONITOR_SESSION_DETAILS,
+  false
+);
 const wslScanEnabled = parseBoolean(args.wslScan ?? args.wslScanEnabled ?? process.env.TOKEN_MONITOR_WSL_SCAN, true);
+const intervalRequiresActivity = parseBoolean(
+  args.intervalRequiresActivity ?? process.env.TOKEN_MONITOR_INTERVAL_REQUIRES_ACTIVITY,
+  watchEnabled
+);
 const opencodeLocalLimitsEnabled = parseBoolean(
   args['opencode-local-limits']
     ?? args.opencodeLocalLimits
@@ -79,13 +128,16 @@ const usageOptions = {
   agentRuntime: 'headless-agent',
   projectsEnabled,
   historyEnabled,
+  sessionDetailsEnabled,
   historyIntervalMs: normalizeHistoryIntervalMs(process.env.TOKEN_MONITOR_HISTORY_INTERVAL_MS),
   dailyHistoryArchiveEnabled: sessionUsageArchiveEnabled,
   dailyHistoryArchiveWriteEnabled: !dryRun,
   anchorPersistenceEnabled: !once && !dryRun,
   intervalMs,
+  intervalRequiresActivity,
   watchEnabled,
   watchDebounceMs,
+  watchMinIntervalMs,
   providerHints,
   wslScanEnabled,
   onError: (error, reason) => console.error(`[${new Date().toISOString()}] (${reason}) ${error.message}`),
@@ -143,9 +195,35 @@ async function deliver(summary) {
 
 function registerPidFile(stopRuntime) {
   const pidPath = pidFilePath();
+  const lockPath = `${pidPath}.lock`;
   fs.mkdirSync(path.dirname(pidPath), { recursive: true });
+  let lockFd;
+  try {
+    lockFd = fs.openSync(lockPath, 'wx');
+  } catch (error) {
+    if (error.code !== 'EEXIST') throw error;
+    let existingPid = 0;
+    try { existingPid = Number(fs.readFileSync(pidPath, 'utf8').trim()); } catch (_) {}
+    let running = false;
+    if (Number.isInteger(existingPid) && existingPid > 0) {
+      try { process.kill(existingPid, 0); running = true; } catch (probeError) { running = probeError.code === 'EPERM'; }
+    }
+    if (running) {
+      console.error(`Token Monitor agent is already running (pid ${existingPid}).`);
+      return false;
+    }
+    try { fs.unlinkSync(lockPath); } catch (_) { return false; }
+    lockFd = fs.openSync(lockPath, 'wx');
+  }
   fs.writeFileSync(pidPath, String(process.pid), 'utf8');
-  const cleanup = () => { try { fs.unlinkSync(pidPath); } catch (_) {} };
+  let cleaned = false;
+  const cleanup = () => {
+    if (cleaned) return;
+    cleaned = true;
+    try { fs.unlinkSync(pidPath); } catch (_) {}
+    try { fs.closeSync(lockFd); } catch (_) {}
+    try { fs.unlinkSync(lockPath); } catch (_) {}
+  };
   process.on('exit', cleanup);
   for (const sig of ['SIGINT', 'SIGTERM', 'SIGHUP']) {
     process.on(sig, () => {
@@ -154,17 +232,18 @@ function registerPidFile(stopRuntime) {
       process.exit(0);
     });
   }
+  return true;
 }
 
 async function main() {
-  const startupMessage = `Token Monitor agent device=${deviceId} hub=${hubUrl} intervalMs=${intervalMs} watch=${watchEnabled} projects=${projectsEnabled ? 'on' : 'off'} history=${historyEnabled ? 'on' : 'off'} sessionArchive=${sessionUsageArchiveEnabled ? 'on' : 'off'} limits=${limitsEnabled ? `${limitProviders || 'none'}:${limitsRefreshMode === 'adaptive' ? 'adaptive' : `${limitsRefreshMs}ms`}` : 'off'}`;
+  const startupMessage = `Token Monitor agent device=${deviceId} hub=${hubUrl} resourceMode=${resourceMode} intervalMs=${intervalMs} watch=${watchEnabled} watchMinIntervalMs=${watchMinIntervalMs} projects=${projectsEnabled ? 'on' : 'off'} history=${historyEnabled ? 'on' : 'off'} sessionDetails=${sessionDetailsEnabled ? 'on' : 'off'} sessionArchive=${sessionUsageArchiveEnabled ? 'on' : 'off'} limits=${limitsEnabled ? `${limitProviders || 'none'}:${limitsRefreshMode === 'adaptive' ? 'adaptive' : `${limitsRefreshMs}ms`}` : 'off'}`;
   if (dryRun) console.error(startupMessage);
   else console.log(startupMessage);
   if (!secret) console.warn('Warning: TOKEN_MONITOR_SECRET is not set. Posting without authorization header.');
   // Claim archive ownership before either a one-shot or long-running scan so
   // Electron can yield before its history read-modify-write reaches disk.
   let runtimeHandle = null;
-  if (!dryRun) registerPidFile(() => runtimeHandle?.stop());
+  if (!dryRun && !registerPidFile(() => runtimeHandle?.stop())) return;
   const runtimeOptions = {
     envelope: { deviceId, agentVersion: appVersion(), agentRuntime: 'headless-agent' },
     usageOptions,

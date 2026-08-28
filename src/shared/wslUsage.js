@@ -7,7 +7,12 @@ const { emptyPeriod, extractUsageFromTokscale, mergePeriods } = require('./usage
 const { REASONIX_CLIENT } = require('./reasonixPaths');
 const { buildPromaPeriods, collectPromaRows } = require('./promaUsage');
 const { buildDshPeriods, collectDshRows, parseDshUsageText } = require('./dshUsage');
-const { collectAntigravityCliModels, enrichAntigravityJson } = require('./antigravityCliUsage');
+const {
+  buildAntigravityPeriods,
+  collectAntigravityCliModels,
+  enrichAntigravityJson,
+  parseAntigravityUsageText
+} = require('./antigravityCliUsage');
 
 const LXSS_KEY = 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Lxss';
 
@@ -21,6 +26,7 @@ const WSL_DATA_MARKERS = [
   '.claude/projects',
   '.claude/transcripts',
   '.codex/sessions',
+  '.codex/profiles',
   '.local/share/opencode',
   '.openclaw/agents',
   '.clawdbot/agents',
@@ -65,6 +71,7 @@ const MARKER_CLIENTS = {
   '.claude/projects': 'claude',
   '.claude/transcripts': 'claude',
   '.codex/sessions': 'codex',
+  '.codex/profiles': 'codex',
   '.local/share/opencode': 'opencode',
   '.openclaw/agents': 'openclaw',
   '.clawdbot/agents': 'openclaw',
@@ -140,6 +147,17 @@ function runWslBridgeCommand(distro, args, deps = {}) {
   return String(exec('wsl.exe', ['--distribution', distro, '--', ...args]));
 }
 
+function wslRemoteHomeFromUnc(home) {
+  const match = String(home || '').match(/^\\\\wsl(?:\.localhost|\$)?\\([^\\]+)(\\.*)?$/i);
+  if (!match) return null;
+  const homeDir = (match[2] || '\\').replace(/\\/g, '/').replace(/\/+/g, '/');
+  return { distro: match[1], homeDir: homeDir || '/' };
+}
+
+function wslRemoteHomeKey(home) {
+  return home ? `${home.distro}\u0000${home.homeDir}` : '';
+}
+
 function wslBridgeHomes(deps = {}) {
   const homes = new Map();
   for (const distro of listWslDistros(deps)) {
@@ -173,7 +191,7 @@ function wslBridgeHomes(deps = {}) {
   return [...homes.values()];
 }
 
-function collectDshRowsFromWsl(home, deps = {}) {
+function collectDshRowsFromWsl(home, deps = {}, options = {}) {
   const root = `${home.homeDir.replace(/\/$/, '')}/.dsh/sessions`;
   const output = runWslBridgeCommand(home.distro, [
     'find', root, '-type', 'f', '\\(', '-name', 'session.jsonl', '-o', '-name', 'session.jsonl.zstd', '\\)', '-print0'
@@ -184,7 +202,7 @@ function collectDshRowsFromWsl(home, deps = {}) {
       ? ['zstd', '-q', '-dc', '--', filePath]
       : ['cat', '--', filePath];
     try {
-      rows.push(...parseDshUsageText(runWslBridgeCommand(home.distro, command, deps), filePath));
+      rows.push(...parseDshUsageText(runWslBridgeCommand(home.distro, command, deps), filePath, options));
     } catch (_) {
       // A live session can be replaced or have a torn final frame between
       // find and read. Keep the other sessions and retry on the next tick.
@@ -193,46 +211,86 @@ function collectDshRowsFromWsl(home, deps = {}) {
   return rows;
 }
 
-const AGY_MODEL_SCRIPT = [
-  'import glob,os,re,sqlite3,sys',
-  'rx=re.compile(r"(?<![A-Za-z0-9])(?:gemini|claude|gpt|deepseek|qwen|mistral|llama)-[A-Za-z0-9][A-Za-z0-9._-]*",re.I)',
-  'enum=re.compile(r"MODEL_(GOOGLE_GEMINI|ANTHROPIC_CLAUDE|OPENAI_GPT|DEEPSEEK|QWEN|MISTRAL|META_LLAMA)_([A-Z0-9_]+)",re.I)',
-  'prefix={"GOOGLE_GEMINI":"gemini","ANTHROPIC_CLAUDE":"claude","OPENAI_GPT":"gpt","DEEPSEEK":"deepseek","QWEN":"qwen","MISTRAL":"mistral","META_LLAMA":"llama"}',
-  'def enum_model(m):',
-  '  parts=m.group(2).lower().split("_"); version=[]',
-  '  while parts and parts[0].isdigit() and len(version)<2: version.append(parts.pop(0))',
-  '  body="-".join(([".".join(version)] if version else [])+parts)',
-  '  return (prefix.get(m.group(1).upper(),"")+"-"+body) if body else ""',
+// Antigravity CLI persists one ModelUsageStats protobuf in steps.metadata per
+// model call. Reading it inside WSL avoids the Windows 9P/SQLite boundary and
+// avoids depending on Tokscale support for this private database format.
+const AGY_USAGE_SCRIPT = [
+  'import glob,os,re,sqlite3,sys,datetime',
+  'rx=re.compile(rb"(?<![A-Za-z0-9])(?:gemini|claude|gpt|deepseek|qwen|mistral|llama)-[A-Za-z0-9][A-Za-z0-9._-]*",re.I)',
+  'label_rx=re.compile(rb"(?:Gemini|Claude|GPT|DeepSeek|Qwen|Mistral|Llama)\\s+[0-9][A-Za-z0-9 .()_-]{2,80}")',
+  'def varint(b,i):',
+  ' v=0;s=0',
+  ' while i<len(b):',
+  '  x=b[i];i+=1;v|=(x&127)<<s',
+  '  if x<128:return v,i',
+  '  s+=7',
+  ' return 0,i',
+  'def fields(b):',
+  ' i=0;out=[]',
+  ' try:',
+  '  while i<len(b):',
+  '   key,i=varint(b,i); no=key>>3; wt=key&7',
+  '   if no<1 or no>1000:return []',
+  '   if wt==0:',
+  '    v,i=varint(b,i);out.append((no,wt,v))',
+  '   elif wt==1:',
+  '    if i+8>len(b):return []',
+  '    i+=8',
+  '   elif wt==2:',
+  '    n,i=varint(b,i);v=b[i:i+n];i+=n;out.append((no,wt,v))',
+  '   elif wt==5:',
+  '    if i+4>len(b):return []',
+  '    i+=4',
+  '   else:return []',
+  ' except Exception:return []',
+  ' return out',
+  'def model_for(db):',
+  ' vals=[]',
+  ' for table in ("executor_metadata","gen_metadata","steps"):',
+  '  try: rows=db.execute("select data from "+table).fetchall() if table!="steps" else db.execute("select metadata from steps").fetchall()',
+  '  except Exception: rows=[]',
+  '  for (v,) in rows:',
+  '   if not v:continue',
+  '   raw=v if isinstance(v,bytes) else str(v).encode()',
+  '   vals += [x.decode("ascii","ignore").lower() for x in rx.findall(raw)]',
+  '   if not vals:',
+  '    vals += [re.sub(r"\\s+"," ",x.decode("utf-8","ignore")).strip().lower() for x in label_rx.findall(raw)]',
+  ' if vals:',
+  '  m=vals[0].replace("("," ").replace(")"," ")',
+  '  return re.sub(r"[^a-z0-9.]+","-",m).strip("-")',
+  ' return "unknown"',
+  'def timestamp(blob):',
+  ' fs=fields(blob)',
+  ' for no,wt,v in fs:',
+  '  if no==1 and wt==2:',
+  '   inner=fields(v); sec=next((x[2] for x in inner if x[0]==1 and x[1]==0),0); ns=next((x[2] for x in inner if x[0]==2 and x[1]==0),0)',
+  '   if sec:return datetime.datetime.fromtimestamp(sec+ns/1e9,datetime.timezone.utc).isoformat().replace("+00:00","Z")',
+  ' return ""',
+  'def usage(blob):',
+  ' fs=fields(blob)',
+  ' for no,wt,v in fs:',
+  '  if no!=9 or wt!=2:continue',
+  '  vals={x[0]:x[2] for x in fields(v) if x[1]==0}',
+  '  if 2 not in vals or 3 not in vals:continue',
+  '  return (vals.get(2,0),vals.get(3,0),vals.get(5,0),vals.get(4,0))',
+  ' return None',
   'for root in sys.argv[1:]:',
   ' for p in glob.glob(os.path.join(root,"*.db")):',
   '  try:',
-  '    db=sqlite3.connect("file:"+p+"?mode=ro",uri=True); vals=[]',
-  '    for t in ("gen_metadata","executor_metadata","steps"):',
-  '      try: rows=db.execute("select data from "+t).fetchall()',
-  '      except Exception: rows=[]',
-  '      for (v,) in rows:',
-  '        s=v.decode("utf-8","ignore") if isinstance(v,bytes) else str(v)',
-  '        m=rx.search(s)',
-  '        if m: vals.append(m.group(0).lower())',
-  '        else:',
-  '          m=enum.search(s)',
-  '          if m: vals.append(enum_model(m))',
-  '    db.close()',
-  '    if vals: print(os.path.basename(p)[:-3]+"\\t"+vals[0])',
-  '  except Exception: pass'
+  '   db=sqlite3.connect("file:"+p+"?mode=ro",uri=True,timeout=0.2); model=model_for(db); sid=os.path.basename(p)[:-3]',
+  '   for _,metadata in db.execute("select idx,metadata from steps order by idx"):',
+  '    if not metadata:continue',
+  '    when=timestamp(metadata); u=usage(metadata)',
+  '    if when and u and sum(u)>0:print("\\t".join([sid,model,when]+[str(max(0,int(x))) for x in u]))',
+  '   db.close()',
+  '  except Exception:pass'
 ].join('\n');
 
-function collectAntigravityModelsFromWsl(home, deps = {}) {
+function collectAntigravityUsageRowsFromWsl(home, deps = {}) {
   const homeDir = home.homeDir.replace(/\/$/, '');
   const roots = ['antigravity-cli', 'antigravity', 'antigravity-ide', 'antigravity-backup']
     .map((name) => homeDir + '/.gemini/' + name + '/conversations');
-  const output = runWslBridgeCommand(home.distro, ['python3', '-c', AGY_MODEL_SCRIPT, ...roots], deps);
-  const models = new Map();
-  for (const line of output.split(/\r?\n/)) {
-    const [sessionId, model] = line.trim().split('\t');
-    if (sessionId && model) models.set(sessionId, model);
-  }
-  return models;
+  return parseAntigravityUsageText(runWslBridgeCommand(home.distro, ['python3', '-c', AGY_USAGE_SCRIPT, ...roots], deps));
 }
 
 function emptyWslBundle() {
@@ -285,7 +343,7 @@ function distroNamesFromRegistry(text) {
 function distroNamesFromEnvironment(env = process.env) {
   const names = [];
   for (const value of Object.values(env || {})) {
-    const match = String(value || '').match(/^\\\\wsl(?:\.localhost)?\\([^\\]+)\\/i);
+    const match = String(value || '').match(/^\\\\wsl(?:\.localhost|\$)?\\([^\\]+)\\/i);
     const name = match?.[1]?.trim();
     if (name && !names.includes(name)) names.push(name);
   }
@@ -315,6 +373,55 @@ function listWslDistros(deps = {}) {
 // Empty array = no tracked client stores data here.
 function wslHomePath(home, relativePath) {
   return `${home}\\${relativePath.replace(/\//g, '\\')}`;
+}
+
+function wslCodexProfileHomes(home, readdirSync = fs.readdirSync) {
+  const profilesRoot = wslHomePath(home, '.codex/profiles');
+  try {
+    return readdirSync(profilesRoot, { withFileTypes: true })
+      .flatMap((entry) => {
+        if (typeof entry === 'string') return [wslHomePath(profilesRoot, entry)];
+        return entry?.isDirectory?.() ? [wslHomePath(profilesRoot, entry.name)] : [];
+      });
+  } catch (_) {
+    return [];
+  }
+}
+
+async function runWslTokscaleWithCodexProfiles({
+  runTokscale,
+  baseInput,
+  profiles,
+  commandTimeoutMs,
+  signal,
+  logger,
+  groupBy
+}) {
+  const base = await runTokscale({ ...baseInput, groupBy });
+  if (!profiles || profiles.length === 0) return base;
+  const entries = Array.isArray(base?.entries) ? [...base.entries] : [];
+  for (const profile of profiles) {
+    try {
+      const profileJson = await runTokscale({
+        clients: 'codex',
+        flags: baseInput.flags.filter((value) => value !== '--home' && value !== baseInput.home),
+        commandTimeoutMs,
+        signal,
+        env: { ...(baseInput.env || process.env), CODEX_HOME: profile },
+        groupBy
+      });
+      if (Array.isArray(profileJson?.entries)) {
+        entries.push(...profileJson.entries.map((entry) => (
+          entry && typeof entry === 'object'
+            ? { ...entry, provider: profile.split(/[\\/]/).pop() }
+            : entry
+        )));
+      }
+    } catch (error) {
+      if (typeof logger === 'function') logger(`wsl codex profile scan failed for ${profile}: ${error.message}`);
+    }
+  }
+  return entries.length > 0 ? { ...base, entries } : base;
 }
 
 function homeHasData(home, existsSync, readdirSync = fs.readdirSync) {
@@ -381,7 +488,23 @@ function probeWslState(deps = {}) {
 }
 
 async function collectWslUsage(options = {}, deps = {}) {
-  const { clients, trackedClients = clients, allTimeSince, commandTimeoutMs, now, runTokscale, logger, decoratePeriods, providerHints } = options;
+  const {
+    clients,
+    trackedClients = clients,
+    allTimeSince,
+    commandTimeoutMs,
+    now,
+    runTokscale,
+    logger,
+    decoratePeriods,
+    providerHints,
+    sessionDetailsEnabled = true
+  } = options;
+  const todayOnly = options.todayOnly === true;
+  const nowDate = new Date(now || Date.now());
+  const todayStart = todayOnly
+    ? new Date(nowDate.getFullYear(), nowDate.getMonth(), nowDate.getDate()).getTime()
+    : 0;
   const buildProma = options.buildPromaPeriods || buildPromaPeriods;
   const collectProma = options.collectPromaRows || collectPromaRows;
   const buildDsh = options.buildDshPeriods || buildDshPeriods;
@@ -413,11 +536,10 @@ async function collectWslUsage(options = {}, deps = {}) {
   const localHomes = wslUsageHomes(deps);
   const localHomeData = new Map(localHomes.map((home) => [home, homeHasData(home, existsSync, readdirSync)]));
   const hasLocalDsh = [...localHomeData.values()].some((clientsInHome) => clientsInHome.includes('dsh'));
-  const hasLocalAntigravity = [...localHomeData.values()].some((clientsInHome) => clientsInHome.includes('antigravity'));
   const bridgeHomes = (
-    (tracked.has('dsh') && !hasLocalDsh) || (tracked.has('antigravity') && !hasLocalAntigravity)
+    (tracked.has('dsh') && !hasLocalDsh) || tracked.has('antigravity')
   ) ? wslBridgeHomes(deps) : [];
-  let bridgeAntigravityModels = null;
+  const bridgedAntigravitySuccess = new Set();
   // If the Windows process cannot read the WSL 9P share, use wsl.exe for the
   // raw adapters. This path is intentionally a fallback: when UNC is readable,
   // Tokscale remains the authoritative reader for all of its supported clients.
@@ -429,13 +551,15 @@ async function collectWslUsage(options = {}, deps = {}) {
       detected.add('dsh');
       try {
         const dsh = buildDsh({
-          rows: collectDshRowsFromWsl(remoteHome, deps),
+          rows: collectDshRowsFromWsl(remoteHome, deps, { sinceMs: todayStart }),
           now,
           allTimeSince
         });
         bundle.today = mergePeriods(bundle.today, extractUsageFromTokscale(dsh.today, { providerHints }));
-        bundle.month = mergePeriods(bundle.month, extractUsageFromTokscale(dsh.month, { providerHints }));
-        bundle.allTime = mergePeriods(bundle.allTime, extractUsageFromTokscale(dsh.allTime, { providerHints }));
+        if (!todayOnly) {
+          bundle.month = mergePeriods(bundle.month, extractUsageFromTokscale(dsh.month, { providerHints }));
+          bundle.allTime = mergePeriods(bundle.allTime, extractUsageFromTokscale(dsh.allTime, { providerHints }));
+        }
         remoteSucceeded = true;
       } catch (error) {
         if (typeof logger === 'function') logger(`wsl dsh bridge failed for ${remoteHome.distro}:${remoteHome.homeDir}: ${error.message}`);
@@ -444,11 +568,15 @@ async function collectWslUsage(options = {}, deps = {}) {
     if (tracked.has('antigravity') && remoteClients.has('antigravity')) {
       detected.add('antigravity');
       try {
-        const models = collectAntigravityModelsFromWsl(remoteHome, deps);
-        if (models.size > 0) {
-          bridgeAntigravityModels = bridgeAntigravityModels || new Map();
-          for (const [sessionId, model] of models) bridgeAntigravityModels.set(sessionId, model);
+        const rows = collectAntigravityUsageRowsFromWsl(remoteHome, deps)
+          .filter((row) => !todayOnly || Date.parse(row.lastUsedAt || '') >= todayStart);
+        const periods = buildAntigravityPeriods({ rows, now, allTimeSince });
+        bundle.today = mergePeriods(bundle.today, extractUsageFromTokscale(periods.today, { providerHints }));
+        if (!todayOnly) {
+          bundle.month = mergePeriods(bundle.month, extractUsageFromTokscale(periods.month, { providerHints }));
+          bundle.allTime = mergePeriods(bundle.allTime, extractUsageFromTokscale(periods.allTime, { providerHints }));
         }
+        bridgedAntigravitySuccess.add(wslRemoteHomeKey(remoteHome));
         remoteSucceeded = true;
       } catch (error) {
         if (typeof logger === 'function') logger(`wsl antigravity bridge failed for ${remoteHome.distro}:${remoteHome.homeDir}: ${error.message}`);
@@ -462,7 +590,7 @@ async function collectWslUsage(options = {}, deps = {}) {
     attemptedHomes += 1;
     let homeSucceeded = false;
     let homeFailed = false;
-    let antigravityModels = bridgeAntigravityModels;
+    let antigravityModels = null;
     // Attribution is marker-based, independent of whether a parser returns data.
     const homeDataClients = localHomeData.get(home) || homeHasData(home, existsSync, readdirSync);
     for (const id of homeDataClients) {
@@ -477,7 +605,8 @@ async function collectWslUsage(options = {}, deps = {}) {
         const promaOptions = {
           now,
           allTimeSince,
-          roots: [wslHomePath(home, '.proma/agent-sessions')]
+           roots: [wslHomePath(home, '.proma/agent-sessions')],
+           ...(todayOnly ? { sinceMs: todayStart } : {})
         };
         if (typeof options.resolvePromaPricing === 'function') {
           const rows = collectProma(promaOptions);
@@ -488,8 +617,10 @@ async function collectWslUsage(options = {}, deps = {}) {
         }
         const proma = buildProma(promaOptions);
         bundle.today = mergePeriods(bundle.today, extractUsageFromTokscale(proma.today, { providerHints }));
-        bundle.month = mergePeriods(bundle.month, extractUsageFromTokscale(proma.month, { providerHints }));
-        bundle.allTime = mergePeriods(bundle.allTime, extractUsageFromTokscale(proma.allTime, { providerHints }));
+        if (!todayOnly) {
+          bundle.month = mergePeriods(bundle.month, extractUsageFromTokscale(proma.month, { providerHints }));
+          bundle.allTime = mergePeriods(bundle.allTime, extractUsageFromTokscale(proma.allTime, { providerHints }));
+        }
         homeSucceeded = true;
       } catch (error) {
         homeFailed = true;
@@ -502,13 +633,18 @@ async function collectWslUsage(options = {}, deps = {}) {
     if (tracked.has('dsh') && homeDataClients.includes('dsh')) {
       try {
         const dsh = buildDsh({
-          rows: collectDsh({ roots: [wslHomePath(home, '.dsh/sessions')] }),
+          rows: collectDsh({
+            roots: [wslHomePath(home, '.dsh/sessions')],
+            ...(todayOnly ? { sinceMs: todayStart } : {})
+          }),
           now,
           allTimeSince
         });
         bundle.today = mergePeriods(bundle.today, extractUsageFromTokscale(dsh.today, { providerHints }));
-        bundle.month = mergePeriods(bundle.month, extractUsageFromTokscale(dsh.month, { providerHints }));
-        bundle.allTime = mergePeriods(bundle.allTime, extractUsageFromTokscale(dsh.allTime, { providerHints }));
+        if (!todayOnly) {
+          bundle.month = mergePeriods(bundle.month, extractUsageFromTokscale(dsh.month, { providerHints }));
+          bundle.allTime = mergePeriods(bundle.allTime, extractUsageFromTokscale(dsh.allTime, { providerHints }));
+        }
         homeSucceeded = true;
       } catch (error) {
         homeFailed = true;
@@ -516,35 +652,82 @@ async function collectWslUsage(options = {}, deps = {}) {
       }
     }
     if (tracked.has('antigravity') && homeDataClients.includes('antigravity')) {
-      try {
-        antigravityModels = collectAntigravity({
-          roots: ['antigravity-cli', 'antigravity', 'antigravity-ide', 'antigravity-backup']
-            .map((name) => wslHomePath(home, '.gemini/' + name + '/conversations'))
-        });
-      } catch (error) {
-        if (typeof logger === 'function') logger(`wsl antigravity model enrichment failed for ${home}: ${error.message}`);
+      const remoteHome = wslRemoteHomeFromUnc(home);
+      const remoteKey = wslRemoteHomeKey(remoteHome);
+      if (remoteHome && !bridgedAntigravitySuccess.has(remoteKey)) {
+        try {
+          const rows = collectAntigravityUsageRowsFromWsl(remoteHome, deps)
+            .filter((row) => !todayOnly || Date.parse(row.lastUsedAt || '') >= todayStart);
+          const periods = buildAntigravityPeriods({ rows, now, allTimeSince });
+          bundle.today = mergePeriods(bundle.today, extractUsageFromTokscale(periods.today, { providerHints }));
+          if (!todayOnly) {
+            bundle.month = mergePeriods(bundle.month, extractUsageFromTokscale(periods.month, { providerHints }));
+            bundle.allTime = mergePeriods(bundle.allTime, extractUsageFromTokscale(periods.allTime, { providerHints }));
+          }
+          homeSucceeded = true;
+        } catch (error) {
+          homeFailed = true;
+          if (typeof logger === 'function') logger(`wsl antigravity UNC bridge failed for ${home}: ${error.message}`);
+        }
+      } else {
+        try {
+          antigravityModels = collectAntigravity({
+            roots: ['antigravity-cli', 'antigravity', 'antigravity-ide', 'antigravity-backup']
+              .map((name) => wslHomePath(home, '.gemini/' + name + '/conversations'))
+          });
+        } catch (error) {
+          if (typeof logger === 'function') logger(`wsl antigravity model enrichment failed for ${home}: ${error.message}`);
+        }
       }
     }
     // Tokscale 4.6+ keeps explicit --home scans isolated from host-native roots,
     // so every requested client can be passed through for each discovered home.
     // Keep the empty guard because an empty --client expands to all clients.
-    if (clientsCsv.length > 0 && typeof runTokscale === 'function') try {
+    const uncRemoteHome = wslRemoteHomeFromUnc(home);
+    const isUncAntigravityHome = uncRemoteHome && homeDataClients.includes('antigravity');
+    const homeClientsCsv = clientsCsv.split(',')
+      .filter((client) => !(client === 'antigravity' && isUncAntigravityHome))
+      .join(',');
+    if (homeClientsCsv.length > 0 && typeof runTokscale === 'function') try {
       // Serial on purpose (issue #15): never run these concurrently.
-      const todayJson = await runTokscale({ clients: clientsCsv, flags: ['--today', '--home', home], commandTimeoutMs, signal: options.signal });
-      throwIfAborted(options.signal, 'WSL usage scan aborted');
-      const monthJson = await runTokscale({ clients: clientsCsv, flags: ['--month', '--home', home], commandTimeoutMs, signal: options.signal });
-      throwIfAborted(options.signal, 'WSL usage scan aborted');
-      const allTimeJson = await runTokscale({ clients: clientsCsv, flags: ['--since', allTimeSince, '--home', home], commandTimeoutMs, signal: options.signal });
-      throwIfAborted(options.signal, 'WSL usage scan aborted');
-      const periods = {
-        today: extractUsageFromTokscale(enrichAntigravityJson(todayJson, antigravityModels), { providerHints }),
-        month: extractUsageFromTokscale(enrichAntigravityJson(monthJson, antigravityModels), { providerHints }),
-        allTime: extractUsageFromTokscale(enrichAntigravityJson(allTimeJson, antigravityModels), { providerHints })
-      };
-      if (typeof decoratePeriods === 'function') decoratePeriods(periods, home);
-      bundle.today = mergePeriods(bundle.today, periods.today);
-      bundle.month = mergePeriods(bundle.month, periods.month);
-      bundle.allTime = mergePeriods(bundle.allTime, periods.allTime);
+      const codexProfiles = homeClientsCsv.split(',').includes('codex')
+        ? wslCodexProfileHomes(home, readdirSync)
+        : [];
+      const scan = (periodFlags) => runWslTokscaleWithCodexProfiles({
+        runTokscale,
+        baseInput: {
+          clients: homeClientsCsv,
+          flags: periodFlags,
+          home,
+          commandTimeoutMs,
+          signal: options.signal
+        },
+        profiles: codexProfiles,
+        commandTimeoutMs,
+        signal: options.signal,
+        logger,
+        groupBy: sessionDetailsEnabled === false ? 'client,provider,model' : 'client,session,model'
+      });
+       let todayJson = await scan(['--today', '--home', home]);
+       throwIfAborted(options.signal, 'WSL usage scan aborted');
+       const periods = { today: extractUsageFromTokscale(enrichAntigravityJson(todayJson, antigravityModels), { providerHints }) };
+       todayJson = null;
+       if (!todayOnly) {
+         let monthJson = await scan(['--month', '--home', home]);
+         throwIfAborted(options.signal, 'WSL usage scan aborted');
+         periods.month = extractUsageFromTokscale(enrichAntigravityJson(monthJson, antigravityModels), { providerHints });
+         monthJson = null;
+         let allTimeJson = await scan(['--since', allTimeSince, '--home', home]);
+         throwIfAborted(options.signal, 'WSL usage scan aborted');
+         periods.allTime = extractUsageFromTokscale(enrichAntigravityJson(allTimeJson, antigravityModels), { providerHints });
+         allTimeJson = null;
+       }
+       if (typeof decoratePeriods === 'function') decoratePeriods(periods, home);
+       bundle.today = mergePeriods(bundle.today, periods.today);
+       if (!todayOnly) {
+         bundle.month = mergePeriods(bundle.month, periods.month);
+         bundle.allTime = mergePeriods(bundle.allTime, periods.allTime);
+       }
       homeSucceeded = true;
     } catch (error) {
       throwIfAborted(options.signal, 'WSL usage scan aborted');
@@ -578,5 +761,6 @@ module.exports = {
   listRunningWslDistros,
   listWslDistros,
   probeWslState,
+  wslCodexProfileHomes,
   wslUsageHomes
 };

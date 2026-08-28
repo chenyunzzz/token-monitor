@@ -130,8 +130,73 @@ function enrichAntigravityJson(json, modelsBySession) {
   return changed ? { ...json, entries } : json;
 }
 
+function timestampMs(value) {
+  if (typeof value === 'number' || (typeof value === 'string' && /^\d+(?:\.\d+)?$/.test(value.trim()))) {
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed) || parsed <= 0) return 0;
+    return parsed < 1e12 ? parsed * 1000 : parsed;
+  }
+  const parsed = Date.parse(value || '');
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
+}
+
+function parseAntigravityUsageText(text) {
+  const rows = [];
+  for (const line of String(text || '').split(/\r?\n/)) {
+    if (!line.trim()) continue;
+    const [sessionId, model, lastUsedAt, input, output, cacheRead, cacheWrite] = line.split('\t');
+    if (!sessionId || !lastUsedAt) continue;
+    const time = timestampMs(lastUsedAt);
+    if (!time) continue;
+    const numbers = [input, output, cacheRead, cacheWrite].map((value) => Math.max(0, Math.round(Number(value || 0))));
+    if (numbers.every((value) => value === 0)) continue;
+    rows.push({
+      client: 'antigravity-cli',
+      provider: 'antigravity',
+      sessionId,
+      model: model || 'unknown',
+      input: numbers[0],
+      output: numbers[1],
+      cacheRead: numbers[2],
+      cacheWrite: numbers[3],
+      messageCount: 1,
+      startedAt: new Date(time).toISOString(),
+      lastUsedAt: new Date(time).toISOString()
+    });
+  }
+  return rows;
+}
+
+function periodStart(now, period) {
+  const date = new Date(now || Date.now());
+  if (period === 'today') return new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
+  if (period === 'month') return new Date(date.getFullYear(), date.getMonth(), 1).getTime();
+  return 0;
+}
+
+function buildAntigravityJson(rows, period, options = {}) {
+  const start = periodStart(options.now, period);
+  const allTimeSince = timestampMs(options.allTimeSince);
+  const since = period === 'allTime' ? allTimeSince : start;
+  return {
+    groupBy: 'client,session,model',
+    entries: rows.filter((row) => !since || timestampMs(row.lastUsedAt) >= since)
+  };
+}
+
+function buildAntigravityPeriods(options = {}) {
+  const rows = Array.isArray(options.rows) ? options.rows : [];
+  return {
+    today: buildAntigravityJson(rows, 'today', options),
+    month: buildAntigravityJson(rows, 'month', options),
+    allTime: buildAntigravityJson(rows, 'allTime', options)
+  };
+}
+
 module.exports = {
+  buildAntigravityPeriods,
   collectAntigravityCliModels,
   enrichAntigravityJson,
-  modelCandidates
+  modelCandidates,
+  parseAntigravityUsageText
 };

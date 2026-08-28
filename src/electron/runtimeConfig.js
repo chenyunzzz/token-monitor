@@ -46,7 +46,9 @@ const USAGE_CONFIG_FINGERPRINT_KEYS = Object.freeze([
   'watchTriggersCollection',
   'intervalRequiresActivity',
   'watchDebounceMs',
-  'wslScanEnabled'
+  'watchMinIntervalMs',
+  'wslScanEnabled',
+  'separateWslDevice'
 ]);
 const LIMITS_RECONFIGURE_KEYS = Object.freeze([
   'limitsEnabled',
@@ -124,7 +126,12 @@ function usageConfigFromSettings(settings = {}, context = {}) {
     watchTriggersCollection: context.watchTriggersCollection !== false,
     intervalRequiresActivity: Boolean(context.intervalRequiresActivity),
     watchDebounceMs: Number(context.watchDebounceMs || 1500),
+    watchMinIntervalMs: Number(context.watchMinIntervalMs || 0),
     wslScanEnabled: settings.wslScanEnabled !== false,
+    // This Windows widget is paired with a dedicated WSL headless agent. The
+    // collector uses this boundary to avoid scanning the same Linux files a
+    // second time from Windows.
+    separateWslDevice: context.separateWslDevice === true,
     onError: context.onError,
     logger: context.logger
   };

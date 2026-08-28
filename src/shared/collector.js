@@ -149,12 +149,12 @@ function resolvePlatformBinary() {
   return decideResolver({ downloaded, bundled, shim });
 }
 
-function tokscaleCommand() {
+function tokscaleCommand(env = process.env) {
   const resolved = resolvePlatformBinary();
   const useDirect = Boolean(resolved && resolved.source !== 'shim');
   const command = useDirect
-    ? { bin: resolved.path, prefixArgs: [], env: process.env }
-    : { bin: process.execPath, prefixArgs: [TOKSCALE_BIN_JS], env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' } };
+    ? { bin: resolved.path, prefixArgs: [], env }
+    : { bin: process.execPath, prefixArgs: [TOKSCALE_BIN_JS], env: { ...env, ELECTRON_RUN_AS_NODE: '1' } };
   return {
     ...command,
     identity: [resolved?.source || 'none', resolved?.path || '', resolved?.version || '', resolved?.integrity || ''].join('|')
@@ -179,6 +179,7 @@ function spawnTokscaleJson(userArgs, commandTimeoutMs, command = tokscaleCommand
   return new Promise((resolve, reject) => {
     const child = spawn(bin, [...prefixArgs, ...userArgs], { env, windowsHide: true });
     let stdout = '';
+    let stdoutBytes = 0;
     let stderr = '';
     let settled = false;
     let timeout = null;
@@ -218,7 +219,17 @@ function spawnTokscaleJson(userArgs, commandTimeoutMs, command = tokscaleCommand
     // Keep draining both pipes after termination is requested, but stop retaining
     // data the result can no longer use. A stubborn child must not grow our heap
     // while the physical-close barrier waits for TERM/KILL to take effect.
-    child.stdout.on('data', (chunk) => { if (!settled && !terminalError) stdout += chunk.toString(); });
+    child.stdout.on('data', (chunk) => {
+      if (settled || terminalError) return;
+      const text = chunk.toString();
+      stdoutBytes += Buffer.byteLength(text);
+      if (stdoutBytes > MAX_TOKSCALE_STDOUT_LENGTH) {
+        terminalError = new Error(`tokscale output exceeded ${MAX_TOKSCALE_STDOUT_LENGTH} bytes`);
+        termination.request();
+        return;
+      }
+      stdout += text;
+    });
     child.stderr.on('data', (chunk) => {
       if (settled || terminalError || stderr.length >= MAX_TOKSCALE_STDERR_LENGTH) return;
       stderr += chunk.toString().slice(0, MAX_TOKSCALE_STDERR_LENGTH - stderr.length);
@@ -246,6 +257,10 @@ function spawnTokscaleJson(userArgs, commandTimeoutMs, command = tokscaleCommand
 
 const TOKSCALE_CAPABILITY_PROBE_TIMEOUT_MS = 10_000;
 const MAX_TOKSCALE_STDERR_LENGTH = 64 * 1024;
+// Aggregate scans should stay small. This is a circuit breaker for a broken
+// or unexpectedly verbose binary, so one subprocess cannot retain an
+// unbounded JSON document in the long-lived Electron/agent process.
+const MAX_TOKSCALE_STDOUT_LENGTH = 32 * 1024 * 1024;
 // tokscale rejects an unknown --client value with this exact exit code (see
 // the TOKSCALE_CLIENT_ALIASES comment above) — verified on 4.7.0 and 4.8.0.
 const TOKSCALE_UNKNOWN_CLIENT_EXIT_CODE = 2;
@@ -404,14 +419,14 @@ function applyKnownCapabilityFilter(clientFilter, identity) {
   return supported ? filterSupportedClients(clientFilter, supported) : clientFilter;
 }
 
-function runTokscale({ clients, flags, commandTimeoutMs, signal, terminationOptions, onTerminationUnconfirmed }) {
+function runTokscale({ clients, flags, commandTimeoutMs, signal, terminationOptions, onTerminationUnconfirmed, env, groupBy = 'client,session,model' }) {
   throwIfAborted(signal);
-  const command = tokscaleCommand();
+  const command = tokscaleCommand(env || process.env);
   const requested = tokscaleClientFilter(clients);
   if (!requested) return Promise.resolve({ entries: [] });
   const clientFilter = applyKnownCapabilityFilter(requested, command.identity);
   if (!clientFilter) return Promise.resolve({ entries: [] });
-  const runArgs = (filter) => ['--json', '--client', filter, '--group-by', 'client,session,model', ...flags];
+  const runArgs = (filter) => ['--json', '--client', filter, '--group-by', groupBy, ...flags];
   const subprocessOptions = {
     operation: 'tokscale scan',
     terminationOptions,
@@ -425,6 +440,71 @@ function runTokscale({ clients, flags, commandTimeoutMs, signal, terminationOpti
       onTerminationUnconfirmed
     })
   ));
+}
+
+function codexProfileRoots(home = os.homedir(), env = process.env) {
+  const codexHome = nonBlankEnvPath('CODEX_HOME', path.join(home, '.codex'), env);
+  const profilesRoot = path.join(codexHome, 'profiles');
+  try {
+    return fs.readdirSync(profilesRoot, { withFileTypes: true })
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => path.join(profilesRoot, entry.name));
+  } catch (_) {
+    return [];
+  }
+}
+
+async function runTokscaleWithCodexProfiles({
+  clients,
+  flags,
+  commandTimeoutMs,
+  signal,
+  terminationOptions,
+  onTerminationUnconfirmed,
+  run,
+  homeDir,
+  env,
+  logger,
+  groupBy
+}) {
+  const base = await run({
+    clients,
+    flags,
+    commandTimeoutMs,
+    signal,
+    terminationOptions,
+    onTerminationUnconfirmed,
+    env: env || process.env,
+    groupBy
+  });
+  if (!String(clients || '').split(',').map((value) => value.trim()).includes('codex')) return base;
+  const profiles = codexProfileRoots(homeDir || os.homedir(), env || process.env);
+  if (profiles.length === 0) return base;
+  const entries = Array.isArray(base?.entries) ? [...base.entries] : [];
+  for (const profile of profiles) {
+    try {
+      const profileJson = await run({
+        clients: 'codex',
+        flags,
+        commandTimeoutMs,
+        signal,
+        terminationOptions,
+        onTerminationUnconfirmed,
+        env: { ...(env || process.env), CODEX_HOME: profile },
+        groupBy
+      });
+      if (Array.isArray(profileJson?.entries)) {
+        entries.push(...profileJson.entries.map((entry) => (
+          entry && typeof entry === 'object'
+            ? { ...entry, provider: path.basename(profile) }
+            : entry
+        )));
+      }
+    } catch (error) {
+      if (typeof logger === 'function') logger(`codex profile scan failed for ${profile}: ${error.message}`);
+    }
+  }
+  return entries.length > 0 ? { ...base, entries } : base;
 }
 
 function runTokscaleGraph({ clients, commandTimeoutMs, signal, terminationOptions, onTerminationUnconfirmed }) {
@@ -459,6 +539,13 @@ function lookupModelPricing(modelId, commandTimeoutMs = 15000) {
 const PROMA_PRICING_CACHE_TTL_MS = 6 * 60 * 60 * 1000;
 const PROMA_PRICING_LOOKUP_TIMEOUT_MS = 3000;
 const promaPricingCache = new Map();
+const MAX_PROMA_PRICING_CACHE_ENTRIES = 1024;
+
+function setBoundedCache(cache, key, value, maxEntries) {
+  if (cache.has(key)) cache.delete(key);
+  cache.set(key, value);
+  while (cache.size > maxEntries) cache.delete(cache.keys().next().value);
+}
 
 // tokscale maintains its own pricing catalog cache under its config dir
 // (cache/pricing-{litellm,openrouter,models-dev}.json): the `tokscale pricing`
@@ -737,7 +824,7 @@ async function resolveModelPricing(rows, options = {}) {
       // eligible even if the file itself does not change.
       revision = currentRevision();
     }
-    promaPricingCache.set(modelId, { at: nowMs, revision, pricing });
+    setBoundedCache(promaPricingCache, modelId, { at: nowMs, revision, pricing }, MAX_PROMA_PRICING_CACHE_ENTRIES);
     if (pricing) pricingByModel[modelId] = pricing;
   }
   return pricingByModel;
@@ -822,6 +909,7 @@ function timestampFromJsonLine(line) {
 }
 
 const projectPathCache = new Map();
+const MAX_PROJECT_PATH_CACHE_ENTRIES = 4096;
 
 function projectPathFromJsonl(filePath) {
   let text;
@@ -847,12 +935,12 @@ function projectPathFromJsonl(filePath) {
       const value = payload.cwd || payload.project_path || payload.projectPath || payload.workingDirectory || payload.working_directory;
       if (typeof value === 'string' && value.trim()) {
         const result = value.trim();
-        projectPathCache.set(filePath, { key: cacheKey, value: result });
+        setBoundedCache(projectPathCache, filePath, { key: cacheKey, value: result }, MAX_PROJECT_PATH_CACHE_ENTRIES);
         return result;
       }
     } catch (_) { /* skip partial or non-JSON lines */ }
   }
-  projectPathCache.set(filePath, { key: cacheKey, value: '' });
+  setBoundedCache(projectPathCache, filePath, { key: cacheKey, value: '' }, MAX_PROJECT_PATH_CACHE_ENTRIES);
   return '';
 }
 
@@ -880,6 +968,7 @@ function projectIdentity(value) {
 // a full-tick decoration skip re-reading every idle session (issue: periodic UI
 // stutter once project tracking made this run on every session each tick).
 const jsonlTimestampCache = new Map();
+const MAX_JSONL_TIMESTAMP_CACHE_ENTRIES = 4096;
 
 // Keyed by `sessionsRoot\0sessionId` -> { filePath, createdAt, statFingerprint }.
 // DSH sessions are deliberately excluded from sessionTimestampMap's
@@ -896,6 +985,7 @@ const jsonlTimestampCache = new Map();
 // session-metadata deps fresh on every call, same as jsonlTimestampCache and
 // projectPathCache already rely on being module-level rather than deps-held.
 const dshSessionFileCache = new Map();
+const MAX_DSH_SESSION_FILE_CACHE_ENTRIES = 8192;
 
 function lastJsonlTimestamp(filePath) {
   let stat;
@@ -911,7 +1001,7 @@ function lastJsonlTimestamp(filePath) {
     if (timestamp) { value = timestamp; break; }
   }
   if (!value) value = stat.mtime.toISOString();
-  jsonlTimestampCache.set(filePath, { key: cacheKey, value });
+  setBoundedCache(jsonlTimestampCache, filePath, { key: cacheKey, value }, MAX_JSONL_TIMESTAMP_CACHE_ENTRIES);
   return value;
 }
 
@@ -1057,7 +1147,7 @@ function sessionTimestampMap(periods, home = os.homedir(), deps = {}) {
         // mtime forever.
         let statFingerprint = '';
         try { const st = fs.statSync(entry.filePath); statFingerprint = `${st.size}:${st.mtimeMs}`; } catch (_) { /* file vanished mid-scan */ }
-        dshFileCache.set(key, { ...entry, statFingerprint });
+        setBoundedCache(dshFileCache, key, { ...entry, statFingerprint }, MAX_DSH_SESSION_FILE_CACHE_ENTRIES);
       }
     }
     for (const sessionId of dshIds) {
@@ -1084,7 +1174,7 @@ function sessionTimestampMap(periods, home = os.homedir(), deps = {}) {
         } else {
           entry.statFingerprint = statFingerprint;
         }
-        dshFileCache.set(key, entry);
+        setBoundedCache(dshFileCache, key, entry, MAX_DSH_SESSION_FILE_CACHE_ENTRIES);
       }
       const startedAt = isoFromDate(Number(entry.createdAt));
       if (!startedAt && !lastUsedAt) continue;
@@ -1430,6 +1520,15 @@ function shouldIncludeHistory(nowMs, lastHistoryAtMs, historyIntervalMs, force, 
   if (force) return true;
   return nowMs - (lastHistoryAtMs || 0) >= historyIntervalMs;
 }
+
+function stripSessionDetails(period) {
+  if (!period || typeof period !== 'object') return;
+  // Keep aggregate maps intact. Only the high-cardinality views are omitted
+  // from headless snapshots.
+  period.sessions = Object.create(null);
+  period.projects = Object.create(null);
+}
+
 async function collectUsageOnce(options) {
   throwIfAborted(options.signal);
   const { clients, allTimeSince, commandTimeoutMs, deviceId, agentVersion = appVersion(), agentRuntime = '' } = options;
@@ -1461,6 +1560,8 @@ async function collectUsageOnce(options) {
   }));
   const collectWsl = options.collectWslUsage || collectWslUsageImpl;
   const probeWslStateFn = options.probeWslState || probeWslStateImpl;
+  const collectProma = options.collectPromaRows || collectPromaRows;
+  const collectDsh = options.collectDshRows || collectDshRows;
   // Injectable only for the WSL-status gate, so tests can exercise the win32
   // build path on a non-Windows CI box (the real process.platform stays for
   // tokscale binary resolution, which is genuinely platform-bound).
@@ -1468,9 +1569,20 @@ async function collectUsageOnce(options) {
   const osInfo = options.osInfo === undefined
     ? hostOsInfo()
     : normalizeOsInfo(options.osInfo);
-  const normalizedClients = normalizeClientsCsv(clients);
+  const configuredClients = normalizeClientsCsv(clients);
+  // When the Windows widget is paired with a WSL headless agent, Windows owns
+  // only its native Codex store. The Linux agent owns all WSL clients and the
+  // Windows collector must not scan that same filesystem through wsl.exe.
+  const separateWslDevice = platformValue === 'win32' && options.separateWslDevice === true;
+  const normalizedClients = separateWslDevice ? 'codex' : configuredClients;
   const providerHints = normalizeProviderHints(options.providerHints);
   const projectsEnabled = options.projectsEnabled !== false;
+  // Headless agents only need aggregate totals for the hub. Keeping every
+  // session row through tokscale, JSON parsing, period aggregation, and the
+  // device snapshot multiplies peak memory on large histories. The desktop
+  // widget keeps the detailed grouping so its session view is unchanged.
+  const sessionDetailsEnabled = options.sessionDetailsEnabled !== false;
+  const tokscaleGroupBy = sessionDetailsEnabled ? 'client,session,model' : 'client,provider,model';
   const localSessionMetadataDeps = {
     ...(options.sessionMetadataDeps || {}),
     metadataCache: new Map(),
@@ -1554,7 +1666,10 @@ async function collectUsageOnce(options) {
     throwIfAborted(options.signal);
     if (includesProma && (!targetRequested || targetClients.includes('proma'))) {
       try {
-        promaRows = collectPromaRows();
+        const localAdapterSinceMs = anchorUsed
+          ? new Date(collectedAt.getFullYear(), collectedAt.getMonth(), collectedAt.getDate()).getTime()
+          : undefined;
+        promaRows = collectProma(localAdapterSinceMs ? { sinceMs: localAdapterSinceMs } : {});
         promaPricing = await resolvePromaPricing(promaRows, {
           lookupModelPricing: options.lookupModelPricing,
           commandTimeoutMs: options.pricingTimeoutMs ?? Math.min(commandTimeoutMs || PROMA_PRICING_LOOKUP_TIMEOUT_MS, PROMA_PRICING_LOOKUP_TIMEOUT_MS),
@@ -1572,10 +1687,13 @@ async function collectUsageOnce(options) {
     }
     if (trackedClientSet.has('dsh') && (!targetRequested || targetClients.includes('dsh'))) {
       try {
-        dshRows = collectDshRows({
+        dshRows = collectDsh({
           homeDir: options.homeDir || os.homedir(),
           env: options.env || process.env,
-          platform: platformValue
+          platform: platformValue,
+          ...(anchorUsed
+            ? { sinceMs: new Date(collectedAt.getFullYear(), collectedAt.getMonth(), collectedAt.getDate()).getTime() }
+            : {})
         });
         dshPeriods = buildDshPeriods({ rows: dshRows, now: collectedAt, allTimeSince });
         dshPeriods = {
@@ -1628,7 +1746,17 @@ async function collectUsageOnce(options) {
       let freshPartitions = Object.create(null);
       let useTargetedPartitions = targetRequested;
       if (scanClients) {
-        const todayJson = await runTokscaleFn({ clients: scanClients, flags: ['--today'], commandTimeoutMs, signal: options.signal });
+        const todayJson = await runTokscaleWithCodexProfiles({
+          clients: scanClients,
+          flags: ['--today'],
+          commandTimeoutMs,
+          signal: options.signal,
+          run: runTokscaleFn,
+          homeDir: options.homeDir || os.homedir(),
+          env: options.env || process.env,
+          logger: options.logger,
+          groupBy: tokscaleGroupBy
+        });
         throwIfAborted(options.signal);
         const bundle = extractUsageBundleFromTokscale(enrichAntigravityJson(todayJson, antigravityCliModels), { providerHints });
         freshPartitions = bundle.byClient;
@@ -1653,7 +1781,17 @@ async function collectUsageOnce(options) {
           // the requested set. An unattributed row or an unexpected client would
           // otherwise clear the target while partially overwriting an unrelated
           // anchor partition. Rebuild the complete today snapshot instead.
-          const fullTodayJson = await runTokscaleFn({ clients: tokscaleClients, flags: ['--today'], commandTimeoutMs, signal: options.signal });
+          const fullTodayJson = await runTokscaleWithCodexProfiles({
+            clients: tokscaleClients,
+            flags: ['--today'],
+            commandTimeoutMs,
+            signal: options.signal,
+            run: runTokscaleFn,
+            homeDir: options.homeDir || os.homedir(),
+            env: options.env || process.env,
+            logger: options.logger,
+            groupBy: tokscaleGroupBy
+          });
           throwIfAborted(options.signal);
           freshPartitions = extractUsageBundleFromTokscale(enrichAntigravityJson(fullTodayJson, antigravityCliModels), { providerHints }).byClient;
           useTargetedPartitions = false;
@@ -1694,19 +1832,49 @@ async function collectUsageOnce(options) {
     } else if (tokscaleClients) {
       // Serial on purpose: concurrent scans triple the peak CPU/IO load, which
       // is what let the issue #15 self-trigger loop spike tokscale past 500% CPU.
-      const todayJson = await runTokscaleFn({ clients: tokscaleClients, flags: ['--today'], commandTimeoutMs, signal: options.signal });
+      const todayJson = await runTokscaleWithCodexProfiles({
+        clients: tokscaleClients,
+        flags: ['--today'],
+        commandTimeoutMs,
+        signal: options.signal,
+        run: runTokscaleFn,
+        homeDir: options.homeDir || os.homedir(),
+        env: options.env || process.env,
+        logger: options.logger,
+        groupBy: tokscaleGroupBy
+      });
       throwIfAborted(options.signal);
       const todayBundle = extractUsageBundleFromTokscale(enrichAntigravityJson(todayJson, antigravityCliModels), { providerHints });
       today = todayBundle.period;
       todayPartitions = todayBundle.byClient;
-      if (typeof options.onProgress === 'function') decorateLocalPeriods({ today });
+      if (typeof options.onProgress === 'function' && sessionDetailsEnabled) decorateLocalPeriods({ today });
       emitProgress({ today });
-      const monthJson = await runTokscaleFn({ clients: tokscaleClients, flags: ['--month'], commandTimeoutMs, signal: options.signal });
+      const monthJson = await runTokscaleWithCodexProfiles({
+        clients: tokscaleClients,
+        flags: ['--month'],
+        commandTimeoutMs,
+        signal: options.signal,
+        run: runTokscaleFn,
+        homeDir: options.homeDir || os.homedir(),
+        env: options.env || process.env,
+        logger: options.logger,
+        groupBy: tokscaleGroupBy
+      });
       throwIfAborted(options.signal);
       month = extractUsageFromTokscale(enrichAntigravityJson(monthJson, antigravityCliModels), { providerHints });
-      if (typeof options.onProgress === 'function') decorateLocalPeriods({ today, month });
+      if (typeof options.onProgress === 'function' && sessionDetailsEnabled) decorateLocalPeriods({ today, month });
       emitProgress({ today, month });
-      const allTimeJson = await runTokscaleFn({ clients: tokscaleClients, flags: ['--since', allTimeSince], commandTimeoutMs, signal: options.signal });
+      const allTimeJson = await runTokscaleWithCodexProfiles({
+        clients: tokscaleClients,
+        flags: ['--since', allTimeSince],
+        commandTimeoutMs,
+        signal: options.signal,
+        run: runTokscaleFn,
+        homeDir: options.homeDir || os.homedir(),
+        env: options.env || process.env,
+        logger: options.logger,
+        groupBy: tokscaleGroupBy
+      });
       throwIfAborted(options.signal);
       allTime = extractUsageFromTokscale(enrichAntigravityJson(allTimeJson, antigravityCliModels), { providerHints });
     }
@@ -1721,10 +1889,10 @@ async function collectUsageOnce(options) {
       // them again would re-stat every historical session file every few seconds
       // (the perceived UI stutter). Decorate only today, then propagate its freshly
       // resolved identities onto sessions that started today (absent from the anchor).
-      decorateLocalPeriods({ today }, { retryMisses: true });
+      if (sessionDetailsEnabled) decorateLocalPeriods({ today }, { retryMisses: true });
       propagateTodayProjects(today, [month, allTime]);
     } else {
-      decorateLocalPeriods({ today, month, allTime }, { retryMisses: true });
+      if (sessionDetailsEnabled) decorateLocalPeriods({ today, month, allTime }, { retryMisses: true });
     }
     if (promaPeriods && !anchorUsed) {
       today = mergePeriods(today, promaPeriods.today);
@@ -1766,7 +1934,7 @@ async function collectUsageOnce(options) {
   let wslDetected = [];
   let wslScanFailure = '';
   const previousWslBundle = options.previousWslBundle || options.wslAnchor;
-  const adoptWslResult = (result) => {
+  const adoptWslResult = (result, { todayOnly = false } = {}) => {
     wslDetected = result.detected || [];
     wslScanFailure = result.lastError || '';
     // A transient SQLite/9P or WSL runtime failure must not publish an empty
@@ -1776,10 +1944,26 @@ async function collectUsageOnce(options) {
     if (result.failedHomes > 0 && result.successfulHomes === 0 && previousWslBundle) {
       return previousWslBundle;
     }
+    // A warm WSL refresh only reads today's data. Rebuild the wider windows from
+    // the previous complete WSL snapshot so the refresh has one tokscale scan per
+    // home instead of three, while retaining exact month/all-time totals.
+    if (
+      todayOnly
+      && previousWslBundle
+      && result.failedHomes === 0
+      && result.successfulHomes === result.attemptedHomes
+    ) {
+      return {
+        today: result.bundle.today,
+        month: applyPeriodDelta(previousWslBundle.month, result.bundle.today, previousWslBundle.today),
+        allTime: applyPeriodDelta(previousWslBundle.allTime, result.bundle.today, previousWslBundle.today)
+      };
+    }
     return result.bundle;
   };
-  if (normalizedClients && options.wslScanEnabled !== false) {
+  if (normalizedClients && options.wslScanEnabled !== false && !separateWslDevice) {
     if (options.refreshWsl) {
+      const todayOnly = Boolean(previousWslBundle);
       const wslResult = await collectWsl({
         clients: tokscaleClients,
         trackedClients: normalizedClients,
@@ -1787,6 +1971,8 @@ async function collectUsageOnce(options) {
         allTimeSince,
         now: collectedAt,
         commandTimeoutMs,
+        todayOnly,
+        sessionDetailsEnabled,
         signal: options.signal,
         runTokscale: runTokscaleFn,
         resolvePromaPricing: (rows) => resolvePromaPricing(rows, {
@@ -1795,9 +1981,11 @@ async function collectUsageOnce(options) {
           pricingRevision: options.pricingRevision
         }),
         logger: options.logger,
-        decoratePeriods: (periods, home) => applySessionTimestamps(periods, home, { scopedHome: true, resolveProjects: projectsEnabled })
+        decoratePeriods: sessionDetailsEnabled
+          ? (periods, home) => applySessionTimestamps(periods, home, { scopedHome: true, resolveProjects: projectsEnabled })
+          : undefined
       });
-      wslBundle = adoptWslResult(wslResult);
+      wslBundle = adoptWslResult(wslResult, { todayOnly });
     } else if (options.wslAnchor) {
       wslBundle = options.wslAnchor;
     } else if (!anchorUsed) {
@@ -1808,6 +1996,7 @@ async function collectUsageOnce(options) {
         allTimeSince,
         now: collectedAt,
         commandTimeoutMs,
+        sessionDetailsEnabled,
         signal: options.signal,
         runTokscale: runTokscaleFn,
         resolvePromaPricing: (rows) => resolvePromaPricing(rows, {
@@ -1816,7 +2005,9 @@ async function collectUsageOnce(options) {
           pricingRevision: options.pricingRevision
         }),
         logger: options.logger,
-        decoratePeriods: (periods, home) => applySessionTimestamps(periods, home, { scopedHome: true, resolveProjects: projectsEnabled })
+        decoratePeriods: sessionDetailsEnabled
+          ? (periods, home) => applySessionTimestamps(periods, home, { scopedHome: true, resolveProjects: projectsEnabled })
+          : undefined
       });
       wslBundle = adoptWslResult(wslResult);
     }
@@ -1824,6 +2015,19 @@ async function collectUsageOnce(options) {
   today = mergePeriods(windowsPeriods.today, wslBundle.today);
   month = mergePeriods(windowsPeriods.month, wslBundle.month);
   allTime = mergePeriods(windowsPeriods.allTime, wslBundle.allTime);
+  if (!sessionDetailsEnabled) {
+    // The headless process publishes aggregate counters only. Dropping these
+    // maps before the anchor and device snapshot are captured prevents a large
+    // historical session set from being retained in every long-lived copy.
+    for (const period of [
+      today, month, allTime,
+      windowsPeriods.today, windowsPeriods.month, windowsPeriods.allTime,
+      wslBundle.today, wslBundle.month, wslBundle.allTime
+    ]) {
+      stripSessionDetails(period);
+    }
+    for (const period of Object.values(todayPartitions || {})) stripSessionDetails(period);
+  }
   throwIfAborted(options.signal);
 
   // The renderer intentionally uses the live today period while a day is in
@@ -1859,7 +2063,7 @@ async function collectUsageOnce(options) {
   let wslStatus = null;
   if (platformValue === 'win32' && normalizedClients) {
     const reuseFrozen = !options.refreshWsl && options.wslAnchor && options.wslStatus;
-    if (options.wslScanEnabled === false) {
+    if (separateWslDevice || options.wslScanEnabled === false) {
       wslStatus = { state: 'disabled', detected: [], withData: [] };
     } else if (reuseFrozen) {
       wslStatus = options.wslStatus;
@@ -2258,6 +2462,7 @@ function clientSourceRoots(clientsCsv, options = {}) {
     'codex',
     ['codex-sessions', path.join(codexHome, 'sessions')],
     ['codex-sessions', path.join(codexHome, 'archived_sessions')],
+    ['codex-sessions', path.join(codexHome, 'profiles')],
     ...tokscaleHeadlessRoots(home).map(({ dir, optional }) => ['codex-sessions', path.join(dir, 'codex'), null, optional])
   );
   const hermesHome = resolveHermesHome({ env: process.env, homeDir: home });
@@ -3326,6 +3531,11 @@ function startCollector(options) {
   // the interval loop into spins. Clamping here means no timer below can
   // reintroduce that by forgetting.
   const watchDebounceMs = clampTimerDelayMs(options.watchDebounceMs, 1500);
+  // A debounce only controls the quiet period after the last event. A busy
+  // session can still produce a new quiet period every few seconds, so keep a
+  // separate floor between watch-triggered scans. The Electron widget opts in
+  // to this floor; direct callers can pass 0 when every event must be observed.
+  const watchMinIntervalMs = clampTimerDelayMs(options.watchMinIntervalMs, 0);
   const intervalMs = clampTimerDelayMs(options.intervalMs, 5 * 60 * 1000);
   const historyRetryMs = clampTimerDelayMs(options.historyRetryMs, 60 * 1000);
   const watchUsePolling = resolveWatchUsePolling(options.watchUsePolling);
@@ -3398,6 +3608,7 @@ function startCollector(options) {
   let lastFullScanAt = 0;
   let pendingWaiters = [];
   let debounceTimer = null;
+  let watchNextAllowedAt = 0;
   let intervalTimer = null;
   let stopped = false;
   let lastTickAttemptAt = 0;
@@ -3777,6 +3988,7 @@ function startCollector(options) {
       lastTickDurationMs = Math.max(0, tickFinishedAt - tickStartedAt);
       lastTickFailureCode = null;
       tickHadFailure = false;
+      extendWatchCooldown(reason, tickFinishedAt);
       if (hadPreviousFailure) {
         emitDiagnosticEvent({
           subsystem: 'collector',
@@ -3800,6 +4012,7 @@ function startCollector(options) {
       lastTickDurationMs = Math.max(0, tickFinishedAt - tickStartedAt);
       lastTickFailureCode = 'tick-failed';
       tickHadFailure = true;
+      extendWatchCooldown(reason, tickFinishedAt);
       emitDiagnosticEvent({
         subsystem: 'collector',
         code: 'collector-tick-failed',
@@ -3935,12 +4148,27 @@ function startCollector(options) {
   function scheduleTick(reason, eventClients) {
     if (stopped) return;
     recordWatchClients(eventClients);
+    const now = Date.now();
+    const cooldownActive = watchMinIntervalMs > 0 && now < watchNextAllowedAt;
+    // During the cooldown the existing timer already represents the next
+    // permitted scan. Keep its deadline stable so a noisy source cannot defer
+    // collection forever while still merging all changed clients.
+    if (cooldownActive && debounceTimer) return;
     if (debounceTimer) clearTimeout(debounceTimer);
+    const dueAt = cooldownActive
+      ? Math.max(watchNextAllowedAt, now + watchDebounceMs)
+      : now + watchDebounceMs;
     debounceTimer = setTimeout(() => {
       debounceTimer = null;
+      const currentTime = Date.now();
+      if (currentTime < watchNextAllowedAt) {
+        scheduleTick(reason);
+        return;
+      }
       // Re-arm instead of queueing onto the in-flight tick: the coalesce path
       // would re-run immediately on completion, stacking scans back-to-back.
       if (tickInFlight) { scheduleTick(reason); return; }
+      watchNextAllowedAt = currentTime + watchMinIntervalMs;
       // A raw source event means that client's synced cache may now be stale, so
       // its sync drops to the short floor instead of waiting out the idle
       // cadence. Its cache is deliberately outside the watcher, so a sync here
@@ -3950,7 +4178,16 @@ function startCollector(options) {
         targetClients: takeWatchClients(),
         sourceSelfSync: sourceSyncQueue.takeDue()
       });
-    }, watchDebounceMs);
+    }, Math.max(1, dueAt - now));
+  }
+
+  // The throttle used to start at scan dispatch. A slow tokscale invocation
+  // could finish after the floor and immediately launch another scan on the
+  // next file event. Start the floor again from completion to bound both
+  // subprocess churn and the memory retained by repeated JSON responses.
+  function extendWatchCooldown(reason, completedAt = Date.now()) {
+    if (watchMinIntervalMs <= 0 || tickReasonCode(reason) !== 'watch-event') return;
+    watchNextAllowedAt = Math.max(watchNextAllowedAt, completedAt + watchMinIntervalMs);
   }
 
   // chokidar's close() walks every watched entry and closes every fs.watch
@@ -4174,6 +4411,7 @@ function startCollector(options) {
       collectionMode: watchTriggersCollection ? 'live' : intervalRequiresActivity ? 'smart' : 'interval',
       intervalMs,
       watchDebounceMs,
+      watchMinIntervalMs,
       watchEnabled,
       watchMode,
       watchFallbackCode,
@@ -4238,6 +4476,7 @@ module.exports = {
   visibleDiagnosticRoots,
   clientSourceChecks,
   clientSourceRoots,
+  codexProfileRoots,
   cherryStudioTranscriptRoots,
   clientsForWatchPath,
   clientWatchCandidates,

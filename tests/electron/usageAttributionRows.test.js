@@ -100,6 +100,32 @@ test('Tool and Model breakdowns consume the shared token-or-cost rows', () => {
   assert.match(app, /modelAttributionRows\(period\)/);
   assert.match(app, /visibleAttributionRows\(rows, formatCost\)/);
   assert.match(app, /attributionValue\(/);
+  assert.match(app, /canonicalProviderId\(rawProvider\)/);
+});
+
+test('DSH provider variants are grouped by their upstream backend', () => {
+  const result = deviceBreakdown.deviceBreakdownForPeriod({
+    periods: {
+      today: {
+        totalTokens: 100,
+        clients: { dsh: 100 },
+        clientModels: { dsh: { 'deepseek-v4-flash': 100 } },
+        clientProviderModels: {
+          dsh: {
+            'deepseek-official': { 'deepseek-v4-flash': 40 },
+            'vision-toolkit-deepseek-official': { 'deepseek-v4-flash': 35 },
+            'opencode-go': { 'deepseek-v4-flash': 15 },
+            'vision-toolkit-opencode-go': { 'deepseek-v4-flash': 10 }
+          }
+        }
+      }
+    }
+  }, 'today');
+
+  assert.deepEqual(result.tools[0].models, [
+    { key: 'provider:ollama/deepseek-v4-flash', name: 'Ollama / deepseek-v4-flash', value: 75 },
+    { key: 'provider:opencode-go/deepseek-v4-flash', name: 'OpenCode Go / deepseek-v4-flash', value: 25 }
+  ]);
 });
 
 test('device details keep identical models separate by provider and preserve unknown residuals', () => {

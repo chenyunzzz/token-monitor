@@ -486,6 +486,7 @@ function providerHintForRow(obj, providerHints) {
 
 function detectProvider(obj, options = {}) {
   if (!obj || typeof obj !== 'object') return null;
+  const client = normalizeClientName(detectClient(obj));
   const model = modelObject(obj);
   const explicit = normalizeProviderName(
     nestedProviderValue(obj.provider)
@@ -502,7 +503,15 @@ function detectProvider(obj, options = {}) {
   );
   if (explicit) return explicit;
   const modelValue = detectModel(obj);
-  return qualifiedModelParts(modelValue).provider || providerHintForRow(obj, options.providerHints);
+  const qualifiedProvider = qualifiedModelParts(modelValue).provider;
+  if (qualifiedProvider) return qualifiedProvider;
+  const hintedProvider = providerHintForRow(obj, options.providerHints);
+  if (hintedProvider) return normalizeProviderName(hintedProvider);
+  // The WSL Antigravity bridge reads a private SQLite store whose rows have no
+  // provider field. The source identity is still stable; leaving it empty
+  // creates a false residual "Unclassified" row beside the same model.
+  if (client === 'antigravity') return 'antigravity';
+  return null;
 }
 
 function detectSessionId(obj) {
@@ -1592,14 +1601,90 @@ function isPeriodExpired(record, periodName, nowMs) {
   return false;
 }
 
+function subtractUsageValue(base, deduction) {
+  if (typeof base === 'number') return Math.max(0, base - asNumber(deduction));
+  if (Array.isArray(base)) return base.slice();
+  if (base && typeof base === 'object') {
+    const result = {};
+    for (const [key, value] of Object.entries(base)) {
+      result[key] = subtractUsageValue(value, deduction?.[key]);
+    }
+    return result;
+  }
+  return base;
+}
+
+function subtractUsagePeriod(base, deduction) {
+  const result = normalizePeriod(base);
+  const source = normalizePeriod(deduction);
+  for (const key of Object.keys(result)) {
+    if (key === 'capabilities') continue;
+    result[key] = subtractUsageValue(result[key], source[key]);
+  }
+  return result;
+}
+
+function hasWslHeadlessPeer(record, records) {
+  if (!/^win32(?:-|$)/i.test(record.platform) || !record.sourcePeriods?.wsl) return false;
+  const hostname = String(record.hostname || '').trim().toLowerCase();
+  if (!hostname) return false;
+  return records.some((peer) => (
+    peer !== record
+    && /^linux(?:-|$)/i.test(peer.platform)
+    && peer.agentRuntime === 'headless-agent'
+    && String(peer.hostname || '').trim().toLowerCase() === hostname
+  ));
+}
+
+function deduplicateWslHeadlessPeer(record, records) {
+  if (!hasWslHeadlessPeer(record, records)) return record;
+  const peer = records.find((candidate) => (
+    candidate !== record
+    && /^linux(?:-|$)/i.test(candidate.platform)
+    && candidate.agentRuntime === 'headless-agent'
+    && String(candidate.hostname || '').trim().toLowerCase() === String(record.hostname || '').trim().toLowerCase()
+  ));
+  const peerPeriods = peer?.periods || {};
+  const periods = {};
+  for (const periodName of PERIODS) {
+    // The Windows snapshot is the sum of native Windows usage and the WSL
+    // source snapshot. Remove those two components independently: subtracting
+    // the peer from the combined snapshot can consume native usage when the
+    // peer is newer or otherwise larger than the source snapshot.
+    const native = subtractUsagePeriod(
+      record.periods[periodName],
+      record.sourcePeriods.wsl[periodName]
+    );
+    const remainingWsl = subtractUsagePeriod(
+      record.sourcePeriods.wsl[periodName],
+      peerPeriods[periodName]
+    );
+    periods[periodName] = mergePeriods(native, remainingWsl);
+  }
+  const remainingSources = { ...record.sourcePeriods };
+  const remainingWsl = {};
+  for (const periodName of PERIODS) {
+    const residual = subtractUsagePeriod(record.sourcePeriods.wsl[periodName], peerPeriods[periodName]);
+    if (residual.totalTokens > 0 || residual.costUsd > 0) remainingWsl[periodName] = residual;
+  }
+  if (Object.keys(remainingWsl).length > 0) remainingSources.wsl = remainingWsl;
+  else delete remainingSources.wsl;
+  return {
+    ...record,
+    periods,
+    ...(Object.keys(remainingSources).length > 0 ? { sourcePeriods: remainingSources } : { sourcePeriods: undefined })
+  };
+}
+
 function aggregateDevices(devices, staleAfterMs, nowMs = Date.now()) {
   const aggregate = { updatedAt: new Date().toISOString(), periods: {}, devices: [], projectsIncomplete: false };
   const sessionDetailsOmitted = {};
   const periodProjectsOmitted = {};
   for (const periodName of PERIODS) aggregate.periods[periodName] = emptyPeriod();
   const now = nowMs;
-  for (const record of devices) {
-    const normalized = normalizeDeviceRecord(record);
+  const normalizedRecords = devices.map((record) => normalizeDeviceRecord(record));
+  for (const record of normalizedRecords) {
+    const normalized = deduplicateWslHeadlessPeer(record, normalizedRecords);
     const ageMs = now - Date.parse(normalized.receivedAt || normalized.updatedAt || 0);
     const deviceStaleAfterMs = staleAfterMsForSyncUpload(normalized.syncUploadIntervalMs, staleAfterMs);
     const stale = Number.isFinite(ageMs) && deviceStaleAfterMs > 0 ? ageMs > deviceStaleAfterMs : false;
@@ -1623,7 +1708,7 @@ function aggregateDevices(devices, staleAfterMs, nowMs = Date.now()) {
       // diagnostics on the unauthenticated surface.
       ...(hasOwn(normalized, 'clientHealth') ? { clientHealth: normalized.clientHealth } : {}),
       ...(hasOwn(normalized, 'wslStatus') ? { wslStatus: normalized.wslStatus } : {}),
-      ...(hasOwn(normalized, 'sourcePeriods') ? { sourcePeriods: normalized.sourcePeriods } : {}),
+      ...(hasOwn(normalized, 'sourcePeriods') && normalized.sourcePeriods ? { sourcePeriods: normalized.sourcePeriods } : {}),
       ...(hasOwn(normalized, 'projectsEnabled') ? { projectsEnabled: normalized.projectsEnabled } : {}),
       ...(hasOwn(normalized, 'allTimeProjectsOmitted') ? { allTimeProjectsOmitted: normalized.allTimeProjectsOmitted } : {}),
       ...(hasOwn(normalized, 'allTimeProjectsIncomplete') ? { allTimeProjectsIncomplete: normalized.allTimeProjectsIncomplete } : {}),

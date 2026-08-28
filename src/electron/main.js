@@ -465,7 +465,12 @@ function defaultSettings() {
     discordRpcEnabled: false,
     deviceId: process.env.TOKEN_MONITOR_DEVICE_ID || defaultDeviceId(),
     lastPostedDeviceId: '',
-    clients: clientsCsvForSetting(process.env.TOKEN_MONITOR_CLIENTS),
+    // This Windows installation is paired with a WSL headless agent. Keep the
+    // desktop collector scoped to the native Codex store so WSL clients cannot
+    // reappear under the Windows device after a fresh install or reset.
+    clients: clientsCsvForSetting(
+      process.env.TOKEN_MONITOR_CLIENTS ?? (process.platform === 'win32' ? 'codex' : undefined)
+    ),
     clientDisplayOrder: '',
     hiddenClients: '',
     pinnedClients: '',
@@ -646,6 +651,11 @@ function electronUsageConfig(errorPrefix) {
     watchTriggersCollection: collectorWatchTriggersCollection(),
     intervalRequiresActivity: collectorIntervalRequiresActivity(),
     watchDebounceMs: 1500,
+    separateWslDevice: process.platform === 'win32',
+    // File-backed clients can emit a burst of writes while a turn is running.
+    // Keep the live UI responsive while preventing each burst from launching a
+    // separate tokscale process.
+    watchMinIntervalMs: 5000,
     dailyHistoryArchiveWriteEnabled: () => !isExternalAgentActive(),
     onError: (error, reason) => console.log(`[${errorPrefix}] ${reason}: ${error.message}`),
     logger: (message) => console.log(`[${errorPrefix}] ${message}`)
@@ -3573,7 +3583,21 @@ function injectLocalDeviceStatus(stats) {
       if (lastCollectedDevice.clientStatus) device.clientStatus = lastCollectedDevice.clientStatus;
       if (lastCollectedDevice.clientHealth) device.clientHealth = lastCollectedDevice.clientHealth;
       if (lastCollectedDevice.wslStatus) device.wslStatus = lastCollectedDevice.wslStatus;
-      if (lastCollectedDevice.sourcePeriods) device.sourcePeriods = lastCollectedDevice.sourcePeriods;
+      // aggregateDevices may remove the Windows-side WSL source when a same-host
+      // Linux headless agent already reports that data. Do not reinsert the raw
+      // local source while restoring presentation-only status fields, or the
+      // renderer sees a deduped total with a duplicated model-tree source.
+      const hasSameHostWslAgent = stats.devices.some((entry) => (
+        entry !== device
+        && /^linux(?:-|$)/i.test(entry.platform)
+        && entry.agentRuntime === 'headless-agent'
+        && String(entry.hostname || '').trim().toLowerCase() === String(device.hostname || '').trim().toLowerCase()
+      ));
+      if (lastCollectedDevice.sourcePeriods
+        && !Object.prototype.hasOwnProperty.call(device, 'sourcePeriods')
+        && !hasSameHostWslAgent) {
+        device.sourcePeriods = lastCollectedDevice.sourcePeriods;
+      }
     }
   }
   // syncPayload drops the unbounded allTime.sessions from uploads (#118), so a hub
