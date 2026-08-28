@@ -39,6 +39,7 @@ const {
   terminationUnconfirmedError
 } = require('./subprocessTermination');
 const cursorAuth = require('./cursorAuth');
+const { withCursorLifecycle } = require('./cursorLifecycle');
 const { claudeSessionRoots } = require('./claudePaths');
 const { findSessionFiles, codexSessionFile } = require('./sessionFiles');
 const opencodeSession = require('./opencodeSession');
@@ -419,6 +420,11 @@ function applyKnownCapabilityFilter(clientFilter, identity) {
   return supported ? filterSupportedClients(clientFilter, supported) : clientFilter;
 }
 
+function runCursorAwareTokscale(clientFilter, operation, signal) {
+  const includesCursor = String(clientFilter || '').split(',').includes('cursor');
+  return includesCursor ? withCursorLifecycle(operation, { signal }) : operation();
+}
+
 function runTokscale({ clients, flags, commandTimeoutMs, signal, terminationOptions, onTerminationUnconfirmed, env, groupBy = 'client,session,model' }) {
   throwIfAborted(signal);
   const command = tokscaleCommand(env || process.env);
@@ -432,14 +438,16 @@ function runTokscale({ clients, flags, commandTimeoutMs, signal, terminationOpti
     terminationOptions,
     onTerminationUnconfirmed
   };
-  return spawnTokscaleJson(runArgs(clientFilter), commandTimeoutMs, command, signal, subprocessOptions).catch((error) => (
-    retryWithKnownCapabilities(error, requested, command, { entries: [] }, (filtered) => (
-      spawnTokscaleJson(runArgs(filtered), commandTimeoutMs, command, signal, subprocessOptions)
-    ), signal, {
-      terminationOptions,
-      onTerminationUnconfirmed
-    })
-  ));
+  return runCursorAwareTokscale(clientFilter, () => (
+    spawnTokscaleJson(runArgs(clientFilter), commandTimeoutMs, command, signal, subprocessOptions).catch((error) => (
+      retryWithKnownCapabilities(error, requested, command, { entries: [] }, (filtered) => (
+        spawnTokscaleJson(runArgs(filtered), commandTimeoutMs, command, signal, subprocessOptions)
+      ), signal, {
+        terminationOptions,
+        onTerminationUnconfirmed
+      })
+    ))
+  ), signal);
 }
 
 function codexProfileRoots(home = os.homedir(), env = process.env) {
@@ -520,14 +528,16 @@ function runTokscaleGraph({ clients, commandTimeoutMs, signal, terminationOption
     terminationOptions,
     onTerminationUnconfirmed
   };
-  return spawnTokscaleJson(runArgs(clientFilter), commandTimeoutMs, command, signal, subprocessOptions).catch((error) => (
-    retryWithKnownCapabilities(error, requested, command, { contributions: [] }, (filtered) => (
-      spawnTokscaleJson(runArgs(filtered), commandTimeoutMs, command, signal, subprocessOptions)
-    ), signal, {
-      terminationOptions,
-      onTerminationUnconfirmed
-    })
-  ));
+  return runCursorAwareTokscale(clientFilter, () => (
+    spawnTokscaleJson(runArgs(clientFilter), commandTimeoutMs, command, signal, subprocessOptions).catch((error) => (
+      retryWithKnownCapabilities(error, requested, command, { contributions: [] }, (filtered) => (
+        spawnTokscaleJson(runArgs(filtered), commandTimeoutMs, command, signal, subprocessOptions)
+      ), signal, {
+        terminationOptions,
+        onTerminationUnconfirmed
+      })
+    ))
+  ), signal);
 }
 
 function lookupModelPricing(modelId, commandTimeoutMs = 15000) {
@@ -1249,7 +1259,6 @@ async function maybeSyncCursor(clientsCsv, logger, options = {}) {
   throwIfAborted(options.signal);
   const enabled = new Set(normalizeClientsCsv(clientsCsv).split(',').filter(Boolean));
   if (!enabled.has('cursor')) return;
-  if (!cursorAuth.readActiveAccount()) return;
   if (!selfSyncThrottle.claim('cursor', options.minIntervalMs)) return;
   const attempt = selfSyncThrottle.beginAttempt('cursor');
   const cancelAttempt = () => selfSyncThrottle.cancelAttempt('cursor', attempt);

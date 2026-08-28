@@ -1088,6 +1088,87 @@ test('collectLimitsOnce flattens multiple providers returned by a provider fetch
   );
 });
 
+test('aggregateLimits preserves distinct Cursor accounts and deduplicates the same account across devices', () => {
+  const cursorProvider = (accountKey, accountEmail, planLabel, usedPercent, updatedAt) => ({
+    provider: 'cursor',
+    accountKey,
+    accountEmail,
+    accountLabel: accountEmail,
+    planLabel,
+    status: 'ok',
+    source: 'web',
+    updatedAt,
+    windows: [{ kind: 'billing', label: 'Total', usedPercent }]
+  });
+  const aggregate = aggregateLimits([
+    {
+      deviceId: 'this-mac',
+      limits: {
+        providers: [
+          cursorProvider('sha256:cursor-a', 'a@example.com', 'Free', 10, '2026-08-26T10:00:00.000Z'),
+          cursorProvider('sha256:cursor-b', 'b@example.com', 'Pro', 20, '2026-08-26T10:01:00.000Z')
+        ]
+      }
+    },
+    {
+      deviceId: 'office-pc',
+      limits: {
+        providers: [
+          cursorProvider('sha256:cursor-a', 'a@example.com', 'Free', 30, '2026-08-26T10:02:00.000Z')
+        ]
+      }
+    }
+  ], 0, Date.parse('2026-08-26T10:03:00.000Z'));
+
+  const cursorRows = aggregate.providers.filter((provider) => provider.provider === 'cursor');
+  assert.equal(cursorRows.length, 2);
+  assert.deepEqual(cursorRows.map((provider) => provider.accountEmail), ['a@example.com', 'b@example.com']);
+  assert.deepEqual(cursorRows.map((provider) => provider.planLabel), ['Free', 'Pro']);
+  assert.equal(cursorRows[0].sourceDeviceId, 'office-pc');
+  assert.equal(cursorRows[0].windows[0].usedPercent, 30);
+  assert.equal(cursorRows[1].sourceDeviceId, 'this-mac');
+});
+
+// The collapse-by-name pass exists because one OAuth account hashes differently
+// per platform. Volcengine's accountKey is derived from the AK/SK and the
+// region, so it is identical on every device — the only way one account yields
+// two keys is the Coding/Agent plan split, which must survive to the hub.
+test('aggregateLimits keeps the Volcengine Coding and Agent plans as two rows', () => {
+  const now = '2026-06-24T10:00:00.000Z';
+  const aggregate = aggregateLimits([
+    {
+      deviceId: 'this-mac',
+      limits: {
+        updatedAt: now,
+        providers: [
+          {
+            provider: 'volcengine',
+            accountKey: 'sha256:volc-coding',
+            accountLabel: 'Coding Plan',
+            status: 'ok',
+            source: 'api',
+            updatedAt: now,
+            windows: [{ kind: 'session', label: '5-hour', usedPercent: 34 }]
+          },
+          {
+            provider: 'volcengine',
+            accountKey: 'sha256:volc-agent',
+            accountLabel: 'Agent Plan Medium',
+            status: 'ok',
+            source: 'api',
+            updatedAt: now,
+            windows: [{ kind: 'weekly', label: 'Weekly', usedPercent: 20 }]
+          }
+        ]
+      }
+    }
+  ], 0, Date.parse('2026-06-24T10:02:00.000Z'));
+
+  const volcengineRows = aggregate.providers.filter((provider) => provider.provider === 'volcengine');
+  assert.equal(volcengineRows.length, 2);
+  assert.deepEqual(volcengineRows.map((provider) => provider.accountLabel), ['Agent Plan Medium', 'Coding Plan']);
+});
+
 // Regression guard for the renderer's localProviderStatus(): a sync-mode account
 // card (DeepSeek/Minimax/Grok) must read the local device's RAW limits from
 // stats.devices, not stats.limits.providers. This test pins the root cause:
@@ -1170,6 +1251,21 @@ test('normalizeLimitWindow normalizes the window currency', () => {
   assert.equal(normalizeLimitWindow({ kind: 'billing', currency: 'verylongcurrencycode' }).currency, 'VERYLONG');
   assert.equal(normalizeLimitWindow({ kind: 'billing', currency: '   ' }).currency, null);
   assert.equal(normalizeLimitWindow({ kind: 'billing' }).currency, null);
+});
+
+test('normalizeLimitProvider preserves daily windows in canonical order', () => {
+  const provider = normalizeLimitProvider({
+    provider: 'volcengine',
+    status: 'ok',
+    windows: [
+      { kind: 'billing', label: 'Monthly', usedPercent: 40 },
+      { kind: 'daily', label: 'Daily', usedPercent: 20 },
+      { kind: 'weekly', label: 'Weekly', usedPercent: 30 },
+      { kind: 'session', label: '5-hour', usedPercent: 10 }
+    ]
+  });
+
+  assert.deepEqual(provider.windows.map((window) => window.kind), ['session', 'daily', 'weekly', 'billing']);
 });
 
 test('normalizeLimitWindow preserves only documented component sources', () => {

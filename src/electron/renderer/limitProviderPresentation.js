@@ -52,7 +52,7 @@
   const CAPABILITY_TAGS = {
     claude: ['Auto', 'OAuth/CLI', 'Web'],
     codex: ['Auto', 'OAuth/App/CLI'],
-    cursor: ['Manual login', 'Web'],
+    cursor: ['Auto', 'Web'],
     antigravity: ['App/CLI must be open', 'RPC'],
     opencode: ['Auto', 'API/Web'],
     openrouter: ['Pay-as-you-go', 'API key'],
@@ -64,7 +64,7 @@
     kiro: ['Auto', 'CLI'],
     zai: ['Coding Plan', 'API key'],
     zaiteam: ['Team Plan', 'API key'],
-    volcengine: ['Coding Plan', 'API key'],
+    volcengine: ['Coding/Agent Plan', 'API key'],
     qoder: ['Manual login', 'Web'],
     trae: ['Manual login', 'Web'],
     workbuddy: ['Auto', 'Desktop app'],

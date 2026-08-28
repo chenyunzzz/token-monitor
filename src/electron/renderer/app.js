@@ -315,6 +315,11 @@ function normalizeInitialViewValue(value, allowed, fallback) {
 }
 
 const state = { period: normalizeInitialViewValue(initialViewState.period, viewPeriodValues, 'today'), appUpdate: null, breakdown: normalizeInitialViewValue(initialViewState.breakdown, viewBreakdownValues, 'home'), viewSwitcherOpen: false, viewSwitcherHasOpened: false, limitDetailTooltipHasOpened: false, limitDetailTooltipActive: false, limitDetailTooltipRenderPending: false, settings: null, stats: null, homeHistory: null, homeHistoryBusy: false, homeHistoryRequested: false, homeHistorySignature: '', homeHistoryRetries: 0, homeHistoryRetryTimer: null, homeActivityScrollLeft: null, homeActivityFollowEnd: true, homeActivityResizeObserver: null, serviceStatus: null, serviceStatusBusy: false, serviceProvidersExpanded: false, trendSettingsExpanded: false, trendsActivating: false, homeSettingsExpanded: false, homeLimitSettingsExpanded: false, limitProviderSettingsExpanded: '', clientHealthExpanded: '', clientSources: clientSourceCacheApi.createClientSourceCache(), clientSourcesKey: '', clientSourcesRequest: 0, subscriptionEditingId: '', subscriptionTopUps: [], subscriptionFormBase: null, subscriptionEditorTransitionId: 0, serviceStatusTicker: null, refreshTimer: null, refreshBusy: false, refreshFeedbackTimer: null, currentTotal: 0, rowSignature: '', streamConnected: false, streamFailure: null, mode: 'idle', appInfo: null, systemDarkUi: false, tokscaleStatus: null, tokscaleCheck: null, tokscaleBusy: false, hubInfo: null, hubBuildStatus: null, cursorAccount: { status: null, error: '' }, cursorAccountExpanded: false, codexAccountExpanded: false, codexAccountError: '', codexSignInBusy: false, codexSignInFlowId: '', codexLoginUrl: '', codexLoginStatus: '', codexLoginOutput: '', codexWorkspaceChoices: [], codexWorkspaceId: '', codexActiveAccount: null, codexPendingActiveAccount: null, codexPendingActiveAccountUntil: 0, codexPendingActiveAccountTimer: null, codexSystemSwitchingAccountId: '', codexSystemSwitchErrorAccountId: '', codexSwitchPopoverHasOpened: false, codexSwitchPopoverActive: false, codexSwitchPopoverRenderPending: false, customPricingExpanded: false, claudeAccountExpanded: false, claudePendingCheckSince: 0, opencodeProfileCount: 0, opencodeCookieExpanded: false, openrouterProfileCount: 0, openrouterAccountExpanded: false, thirdPartyProfileCount: 0, thirdPartyAccountExpanded: false, deepseekAccountExpanded: false, deepseekPendingCheckSince: 0, minimaxAccountExpanded: false, minimaxPendingCheckSince: 0, zaiAccountExpanded: false, zaiPendingCheckSince: 0, zaiteamAccountExpanded: false, zaiteamPendingCheckSince: 0, volcengineAccountExpanded: false, volcenginePendingCheckSince: 0, qoderAccountExpanded: false, qoderPendingCheckSince: 0, commandcodeAccountExpanded: false, commandcodePendingCheckSince: 0, kimiAccountExpanded: false, kimiPendingCheckSince: 0, ollamaAccountExpanded: false, ollamaPendingCheckSince: 0, mimoAccountExpanded: false, mimoAccountError: '', copilotAccountExpanded: false, copilotManualExpanded: false, copilotPendingCheckSince: 0, copilotSignInBusy: false, copilotSignInCancelable: false, copilotSignInFlowId: '', copilotAuthorizeMessage: '', copilotLoginStatus: '', copilotErrorMessage: '', floatingBubble: initialFloatingBubble, suppressInitialNumberAnimation: window.__TOKEN_MONITOR_SUPPRESS_INITIAL_NUMBER_ANIMATION__ === true, openSession: null, modelTreeCollapsed: new Set(), detailSort: 'time', recordingWindowShortcut: false, windowShortcutInvalid: false };
+state.codexSystemSwitchError = '';
+state.volcengineAgentExpanded = false;
+/*
+const state = { period: normalizeInitialViewValue(initialViewState.period, viewPeriodValues, 'today'), appUpdate: null, breakdown: normalizeInitialViewValue(initialViewState.breakdown, viewBreakdownValues, 'home'), viewSwitcherOpen: false, viewSwitcherHasOpened: false, limitDetailTooltipHasOpened: false, limitDetailTooltipActive: false, limitDetailTooltipRenderPending: false, settings: null, stats: null, homeHistory: null, homeHistoryBusy: false, homeHistoryRequested: false, homeHistorySignature: '', homeHistoryRetries: 0, homeHistoryRetryTimer: null, homeActivityScrollLeft: null, homeActivityFollowEnd: true, homeActivityResizeObserver: null, serviceStatus: null, serviceStatusBusy: false, serviceProvidersExpanded: false, trendSettingsExpanded: false, trendsActivating: false, homeSettingsExpanded: false, homeLimitSettingsExpanded: false, limitProviderSettingsExpanded: '', clientHealthExpanded: '', clientSources: clientSourceCacheApi.createClientSourceCache(), clientSourcesKey: '', clientSourcesRequest: 0, subscriptionEditingId: '', subscriptionTopUps: [], subscriptionFormBase: null, subscriptionEditorTransitionId: 0, serviceStatusTicker: null, refreshTimer: null, refreshBusy: false, refreshFeedbackTimer: null, currentTotal: 0, rowSignature: '', streamConnected: false, streamFailure: null, mode: 'idle', appInfo: null, systemDarkUi: false, tokscaleStatus: null, tokscaleCheck: null, tokscaleBusy: false, hubInfo: null, hubBuildStatus: null, cursorAccount: { status: null, error: '' }, cursorAccountExpanded: false, codexAccountExpanded: false, codexAccountError: '', codexSignInBusy: false, codexSignInFlowId: '', codexLoginUrl: '', codexLoginStatus: '', codexLoginOutput: '', codexWorkspaceChoices: [], codexWorkspaceId: '', codexActiveAccount: null, codexPendingActiveAccount: null, codexPendingActiveAccountUntil: 0, codexPendingActiveAccountTimer: null, codexSystemSwitchingAccountId: '', codexSystemSwitchErrorAccountId: '', codexSystemSwitchError: '', codexSwitchPopoverHasOpened: false, codexSwitchPopoverActive: false, codexSwitchPopoverRenderPending: false, customPricingExpanded: false, claudeAccountExpanded: false, claudePendingCheckSince: 0, opencodeProfileCount: 0, opencodeCookieExpanded: false, openrouterProfileCount: 0, openrouterAccountExpanded: false, thirdPartyProfileCount: 0, thirdPartyAccountExpanded: false, deepseekAccountExpanded: false, deepseekPendingCheckSince: 0, minimaxAccountExpanded: false, minimaxPendingCheckSince: 0, zaiAccountExpanded: false, zaiPendingCheckSince: 0, zaiteamAccountExpanded: false, zaiteamPendingCheckSince: 0, volcengineAccountExpanded: false, volcenginePendingCheckSince: 0, volcengineAgentExpanded: false, qoderAccountExpanded: false, qoderPendingCheckSince: 0, commandcodeAccountExpanded: false, commandcodePendingCheckSince: 0, kimiAccountExpanded: false, kimiPendingCheckSince: 0, ollamaAccountExpanded: false, ollamaPendingCheckSince: 0, mimoAccountExpanded: false, mimoAccountError: '', copilotAccountExpanded: false, copilotManualExpanded: false, copilotPendingCheckSince: 0, copilotSignInBusy: false, copilotSignInCancelable: false, copilotSignInFlowId: '', copilotAuthorizeMessage: '', copilotLoginStatus: '', copilotErrorMessage: '', floatingBubble: initialFloatingBubble, suppressInitialNumberAnimation: window.__TOKEN_MONITOR_SUPPRESS_INITIAL_NUMBER_ANIMATION__ === true, openSession: null, detailSort: 'time', recordingWindowShortcut: false, windowShortcutInvalid: false };
+*/
 state.clientRescans = clientRescanStateApi.createClientRescanState({
   onChange: (clientId) => {
     if (state.clientHealthExpanded === clientId) refillOpenClientHealthPanel();
@@ -5318,19 +5323,17 @@ function renderProviderWindows(provider, color) {
     }
   } else if (provider.provider === 'volcengine') {
     const session = windowForKind(provider, 'session');
+    const daily = windowForKind(provider, 'daily');
     const weekly = windowForKind(provider, 'weekly');
     const monthly = windowForKind(provider, 'billing');
-    if (session) {
-      const sessionNode = limitWindowNode(session.label || '5-hour', session, color, 0.95);
-      if (!weekly && !monthly && session.label) sessionNode.classList.add('limit-window-wide');
-      windows.append(sessionNode);
-    }
-    if (weekly) windows.append(limitWindowNode('Weekly', weekly, color, 0.68));
-    if (monthly) {
-      const monthlyNode = limitWindowNode('Monthly', monthly, color, 0.68);
-      monthlyNode.classList.add('limit-window-wide');
-      windows.append(monthlyNode);
-    }
+    const nodes = [
+      session && limitWindowNode(session.label || '5-hour', session, color, 0.95),
+      daily && limitWindowNode('Daily', daily, color, 0.78),
+      weekly && limitWindowNode('Weekly', weekly, color, 0.68),
+      monthly && limitWindowNode('Monthly', monthly, color, 0.68)
+    ].filter(Boolean);
+    if (nodes.length % 2 === 1) nodes.at(-1).classList.add('limit-window-wide');
+    windows.append(...nodes);
   } else if (provider.provider === 'kiro') {
     // Kiro exposes monthly credits (plus an optional bonus pool), both billing
     // windows. Render them full-width like Copilot's quota windows.
@@ -5524,7 +5527,8 @@ const LIMIT_ACCOUNT_TITLES = {
   codex: codexAccountTitle,
   opencode: opencodeAccountTitle,
   openrouter: (provider, index) => namedApiAccountTitle(provider, index, 'openrouter'),
-  thirdparty: (provider, index) => namedApiAccountTitle(provider, index, 'thirdparty')
+  thirdparty: (provider, index) => namedApiAccountTitle(provider, index, 'thirdparty'),
+  volcengine: (provider, index, providers) => volcenginePlanAccountTitle(provider, index, providers)
 };
 
 function limitAccountTitle(id, provider, index, providerEntries = [provider]) {
@@ -5630,6 +5634,27 @@ function renderMimoAccountGroup(label, providers, color) {
   return row;
 }
 
+function renderCursorAccountGroup(label, providers, color) {
+  const row = document.createElement('div');
+  row.className = `limit-row limit-row-group${providers.some((provider) => provider.stale) ? ' stale' : ''}`;
+  const groupProvider = { provider: 'cursor', status: 'ok', windows: [], accountGroup: true };
+  const head = renderLimitProviderHead('cursor', label, groupProvider, color, {
+    planText: t('settings.cursor.nAccounts', { count: providers.length }),
+    hideMeta: true
+  });
+  const accountList = document.createElement('div');
+  accountList.className = 'limit-account-list';
+  providers.forEach((provider, index) => {
+    accountList.append(renderLimitProviderRow('cursor', limitAccountTitle('cursor', provider, index, providers), provider, color, {
+      accountRow: true,
+      accountTitle: true,
+      showIcon: false
+    }));
+  });
+  row.append(head, accountList);
+  return row;
+}
+
 function opencodeAccountTitle(provider, index) {
   const name = String(provider?.accountName || '').trim();
   // The collector's canonical name is shown as-is. This column holds account
@@ -5675,6 +5700,21 @@ function namedApiAccountTitle(provider, index, providerId) {
   const accountName = String(provider?.accountName || provider?.accountLabel || '').trim();
   if (accountName.toLowerCase() === 'environment') return t(`settings.${providerId}.environment`);
   return accountName || `Account ${index + 1}`;
+}
+
+// Both Volcengine plans sit on one account, so the row title carries the plan
+// name from accountLabel. accountTitleLabel reads accountName/accountEmail,
+// neither of which these rows have, so without this they would all render as
+// "Account N".
+function volcenginePlanAccountTitle(provider, index, providers) {
+  return String(provider?.accountLabel || '').trim() || limitAccountDefaultTitle(provider, index, providers);
+}
+
+// '' while healthy, because the title already shows the plan and there is no
+// second fact to put here; undefined once it is not, so the head falls back to
+// the status label the same way thirdPartyPlanText does.
+function volcenginePlanRowText(provider) {
+  return provider?.status === 'ok' ? '' : undefined;
 }
 
 function thirdPartyPlanText(provider) {
@@ -5768,6 +5808,15 @@ function renderThirdPartyAccountGroup(label, providers, color) {
   });
 }
 
+// The Coding Plan and the Agent Plan are two subscriptions on one Volcengine
+// account, so they are rows of one card rather than two provider cards.
+function renderVolcengineAccountGroup(label, providers, color) {
+  return renderNamedApiAccountGroup('volcengine', label, providers, color, {
+    groupPlanText: t('settings.volcengine.nPlans', { count: providers.length }),
+    planTextForProvider: volcenginePlanRowText
+  });
+}
+
 function renderLimits() {
   if (!els.limitsPanel) return;
   const holdLimitDetailTooltipRender = limitDetailTooltipShouldHoldRender();
@@ -5853,6 +5902,14 @@ function renderLimits() {
     }
     if (id === 'mimo' && Array.isArray(visibleProviders) && visibleProviders.length > 1) {
       nodes.push(renderMimoAccountGroup(label, visibleProviders, color));
+      continue;
+    }
+    if (id === 'cursor' && Array.isArray(visibleProviders) && visibleProviders.length > 1) {
+      nodes.push(renderCursorAccountGroup(label, visibleProviders, color));
+      continue;
+    }
+    if (id === 'volcengine' && Array.isArray(visibleProviders) && visibleProviders.length > 1) {
+      nodes.push(renderVolcengineAccountGroup(label, visibleProviders, color));
       continue;
     }
     const provider = Array.isArray(visibleProviders) ? visibleProviders[0] : visibleProviders;
@@ -6875,6 +6932,7 @@ function homeLimitWindowLabel(window, providerId = '', visibleWindows = []) {
   }
   const key = {
     session: 'home.limit.session',
+    daily: 'home.limit.daily',
     weekly: 'home.limit.weekly',
     billing: 'home.limit.billing',
     monthly: 'home.limit.monthly'
@@ -13131,7 +13189,7 @@ function trayComposerWindowLabel(entry) {
   const kindLabel = translatedKind === kindKey ? t('trayComposer.window.primary') : translatedKind;
   const rawLabel = String(entry.label || '').trim();
   const normalizedLabel = rawLabel.toLowerCase();
-  const redundantLabels = new Set([kind, 'session', 'weekly', 'billing', 'total']);
+  const redundantLabels = new Set([kind, 'session', 'daily', 'weekly', 'billing', 'total']);
   if (!rawLabel || redundantLabels.has(normalizedLabel)) return kindLabel;
   return `${kindLabel} · ${rawLabel}`;
 }
@@ -14221,6 +14279,7 @@ function renderExternalProviderStatus(providerName) {
     const regionInput = document.getElementById('zaiApiRegionInput');
     if (regionInput) regionInput.value = state.settings?.zaiApiRegion === 'bigmodel-cn' ? 'bigmodel-cn' : 'global';
   }
+  if (providerName === 'volcengine') renderVolcengineAgentOverrideState();
   if (providerName === 'qoder') {
     const siteInput = document.getElementById('qoderSiteInput');
     if (siteInput) siteInput.value = state.settings?.qoderSite === 'cn' ? 'cn' : 'global';
@@ -14236,6 +14295,30 @@ function renderExternalProviderStatus(providerName) {
   logoutBtn.classList.toggle('hidden', source !== 'settings' || (!linked && !canClearConfiguredClaude));
   refreshBtn.classList.toggle('hidden', !configured);
   renderSettingsSummaries();
+}
+
+// The override inputs are password fields, cleared after every save and never
+// repopulated, so this tag is the only thing that tells a stored second account
+// apart from one that was never filled in. It reads the redacted 'set' marker
+// rather than volcengineAgentCredentials, which falls back to the Coding Plan
+// key and is therefore truthy for every Coding-only user.
+function renderVolcengineAgentOverrideState() {
+  const stored = state.settings?.volcengineAgentAccessKeyId === 'set';
+  document.getElementById('volcengineAgentConfigured')?.classList.toggle('hidden', !stored);
+  // Saving with the override fields empty deliberately keeps the stored one, so
+  // without this there is no way back to the main account short of clearing the
+  // Coding Plan credentials too.
+  document.getElementById('volcengineAgentClearButton')?.classList.toggle('hidden', !stored);
+}
+
+// The Agent Plan override is collapsed by default: it only matters when the two
+// plans were bought on different Volcengine accounts.
+function setVolcengineAgentExpanded(expanded) {
+  const next = Boolean(expanded);
+  state.volcengineAgentExpanded = next;
+  document.getElementById('volcengineAgentToggle')?.setAttribute('aria-expanded', next ? 'true' : 'false');
+  document.getElementById('volcengineAgentDetails')?.classList.toggle('hidden', !next);
+  document.getElementById('volcengineAgentPanel')?.classList.toggle('expanded', next);
 }
 
 function setMinimaxAccountExpanded(expanded) {
@@ -15224,12 +15307,9 @@ function renderThirdPartyProfiles() {
 
 function renderCursorStatus() {
   const statusEl = document.getElementById('cursorAccountStatus');
-  const loginBtn = document.getElementById('cursorLoginButton');
-  const logoutBtn = document.getElementById('cursorLogoutButton');
-  const refreshBtn = document.getElementById('cursorRefreshButton');
-  const manualPanel = document.getElementById('cursorManualPanel');
+  const listEl = document.getElementById('cursorAccountList');
   const errorEl = document.getElementById('cursorErrorMessage');
-  if (!statusEl || !loginBtn || !logoutBtn || !refreshBtn || !manualPanel || !errorEl) return;
+  if (!statusEl || !listEl || !errorEl) return;
 
   errorEl.classList.add('hidden');
   errorEl.textContent = '';
@@ -15238,11 +15318,7 @@ function renderCursorStatus() {
     setCursorStatusText(statusEl, t('settings.common.error'));
     errorEl.textContent = t('settings.cursor.statusCheckFailed', { message: state.cursorAccount.error });
     errorEl.classList.remove('hidden');
-    loginBtn.classList.remove('hidden');
-    logoutBtn.classList.add('hidden');
-    refreshBtn.classList.remove('hidden');
-    manualPanel.classList.remove('hidden');
-    setCursorCheckboxesEnabled(false);
+    setCursorCheckboxesEnabled(Boolean(state.cursorAccount.status?.accounts?.length));
     setSettingsSectionExpanded('limits', true);
     setCursorAccountExpanded(true);
     renderSettingsSummaries();
@@ -15256,46 +15332,115 @@ function renderCursorStatus() {
     return;
   }
 
-  if (!status.loggedIn) {
-    setCursorStatusText(statusEl, t('settings.cursor.notLoggedIn'));
-    loginBtn.classList.remove('hidden');
-    logoutBtn.classList.add('hidden');
-    refreshBtn.classList.add('hidden');
-    manualPanel.classList.remove('hidden');
-    setCursorCheckboxesEnabled(false);
-    renderSettingsSummaries();
-    return;
-  }
-  if (status.expired) {
-    setCursorStatusText(statusEl, t('settings.cursor.expired'));
-    loginBtn.classList.remove('hidden');
-    logoutBtn.classList.remove('hidden');
-    refreshBtn.classList.remove('hidden');
-    manualPanel.classList.remove('hidden');
-    setCursorCheckboxesEnabled(false);
-    setSettingsSectionExpanded('limits', true);
-    setCursorAccountExpanded(true);
-    renderSettingsSummaries();
-    return;
-  }
-  const summary = status.email || t('settings.cursor.loggedIn');
+  const accounts = Array.isArray(status.accounts) ? status.accounts : [];
+  const managementBlocked = status.managementBlocked === true;
+  document.getElementById('cursorAgentActiveNote')?.classList.toggle('hidden', !managementBlocked);
+  const addButton = document.getElementById('cursorAddAccountButton');
+  if (addButton) addButton.disabled = managementBlocked;
+  const summary = accounts.length === 0
+    ? t('settings.cursor.notLoggedIn')
+    : t('settings.cursor.connected', { linked: status.linkedCount || 0, total: accounts.length });
   setCursorStatusText(statusEl, summary);
-  loginBtn.classList.add('hidden');
-  logoutBtn.classList.remove('hidden');
-  refreshBtn.classList.remove('hidden');
-  manualPanel.classList.add('hidden');
-  setCursorCheckboxesEnabled(true);
+  setCursorCheckboxesEnabled(accounts.some((account) => !account.expired && !account.error));
+  listEl.replaceChildren();
+  if (accounts.length === 0) {
+    const empty = document.createElement('p');
+    empty.className = 'settings-note';
+    empty.textContent = t('settings.cursor.empty');
+    listEl.append(empty);
+  } else {
+    for (const account of accounts) {
+      const enabled = account.enabled !== false;
+      const row = document.createElement('div');
+      row.className = 'managed-account-row';
+      row.classList.toggle('disabled', !enabled);
+      const fallbackId = String(account.id || '');
+      const accountName = account.email || account.label || (fallbackId ? `…${fallbackId.slice(-8)}` : t('settings.cursor.unnamedAccount'));
+      const input = document.createElement('input');
+      input.className = 'managed-account-checkbox';
+      input.type = 'checkbox';
+      input.checked = enabled;
+      input.setAttribute('aria-label', t('settings.cursor.toggleAccount', { account: accountName }));
+      const main = document.createElement('div');
+      main.className = 'managed-account-main';
+      const name = document.createElement('div');
+      name.className = 'managed-account-email';
+      name.textContent = accountName;
+      main.append(name);
+      const planLabel = account.membershipType
+        ? limitProviderPresentationApi.limitProviderDisplayLabel(account.membershipType)
+        : t('settings.cursor.webAccount');
+      input.addEventListener('change', async () => {
+        input.disabled = true;
+        const result = await window.tokenMonitor.cursor.setAccountEnabled(account.id, input.checked);
+        if (!result?.ok) {
+          state.cursorAccount = { ...state.cursorAccount, error: result?.error || t('settings.cursor.toggleFailed') };
+        } else {
+          state.cursorAccount = { status: result.status, error: '', busy: false };
+          refreshStats({ force: true }).catch(() => {});
+        }
+        renderCursorStatus();
+      });
+      const right = document.createElement('span');
+      right.className = 'managed-account-right';
+      const info = document.createElement('div');
+      info.className = 'managed-account-info';
+      info.textContent = !enabled
+        ? t('settings.cursor.disabled')
+        : account.expired
+          ? t('settings.cursor.expiredShort')
+          : account.error
+            ? t('settings.common.error')
+            : planLabel;
+      info.title = info.textContent;
+      right.append(info);
+      if (account.removable === true && !managementBlocked) {
+        const remove = document.createElement('button');
+        remove.type = 'button';
+        remove.className = 'managed-account-remove';
+        remove.textContent = '✕';
+        remove.title = t('settings.cursor.remove');
+        remove.setAttribute('aria-label', t('settings.cursor.remove'));
+        let confirmingRemove = false;
+        remove.addEventListener('click', async () => {
+          if (!confirmingRemove) {
+            confirmingRemove = true;
+            remove.classList.add('confirming');
+            remove.textContent = '✓';
+            remove.title = t('settings.cursor.removeConfirm', { account: accountName });
+            remove.setAttribute('aria-label', remove.title);
+            return;
+          }
+          remove.disabled = true;
+          const result = await window.tokenMonitor.cursor.logout(account.id);
+          if (!result?.ok) {
+            const message = result?.code === 'EXTERNAL_AGENT_ACTIVE'
+              ? t('settings.cursor.agentActive')
+              : result?.error || t('settings.cursor.removeFailed');
+            state.cursorAccount = { ...state.cursorAccount, error: message };
+          } else {
+            state.cursorAccount = { status: result.status, error: '', busy: false };
+            refreshStats({ force: true }).catch(() => {});
+          }
+          renderCursorStatus();
+        });
+        right.append(remove);
+      }
+      row.append(input, main, right);
+      listEl.append(row);
+    }
+  }
   renderSettingsSummaries();
 }
 
-async function refreshCursorStatus() {
-  state.cursorAccount = { status: null, error: '' };
+async function refreshCursorStatus({ force = false, discover = false } = {}) {
+  state.cursorAccount = { status: null, error: '', busy: true };
   renderCursorStatus();
   try {
-    const status = await window.tokenMonitor.cursor.status();
-    state.cursorAccount = { status, error: '' };
+    const status = await window.tokenMonitor.cursor.status({ force, discover });
+    state.cursorAccount = { status, error: '', busy: false };
   } catch (err) {
-    state.cursorAccount = { status: null, error: err.message };
+    state.cursorAccount = { status: null, error: err.message, busy: false };
   }
   renderCursorStatus();
 }
@@ -15643,22 +15788,27 @@ function setupCursorAccountUI() {
   }
 
   document.getElementById('cursorSettingsToggle').addEventListener('click', () => {
-    setCursorAccountExpanded(!state.cursorAccountExpanded);
+    const expanding = !state.cursorAccountExpanded;
+    setCursorAccountExpanded(expanding);
+    if (expanding && !state.cursorAccount.busy) void refreshCursorStatus({ discover: true });
   });
   setCursorAccountExpanded(false);
 
+  const cursorAddAccountButton = document.getElementById('cursorAddAccountButton');
+  const cursorManualDetails = document.getElementById('cursorManualDetails');
+  function setCursorManualExpanded(expanded) {
+    const next = Boolean(expanded);
+    cursorAddAccountButton?.setAttribute('aria-expanded', next ? 'true' : 'false');
+    cursorManualDetails?.classList.toggle('hidden', !next);
+    document.getElementById('cursorManualPanel')?.classList.toggle('expanded', next);
+  }
+  cursorAddAccountButton?.addEventListener('click', () => {
+    setCursorManualExpanded(cursorManualDetails?.classList.contains('hidden'));
+  });
+  setCursorManualExpanded(false);
+
   document.getElementById('cursorLoginButton').addEventListener('click', () => {
-    window.tokenMonitor.openExternal('https://cursor.com/settings');
-  });
-
-  document.getElementById('cursorLogoutButton').addEventListener('click', async () => {
-    await window.tokenMonitor.cursor.logout();
-    await refreshCursorStatus();
-    await refreshStats({ force: true });
-  });
-
-  document.getElementById('cursorRefreshButton').addEventListener('click', () => {
-    refreshCursorStatus();
+    window.tokenMonitor.openExternal('https://cursor.com/dashboard');
   });
 
   document.getElementById('cursorManualSubmit').addEventListener('click', async () => {
@@ -15667,17 +15817,21 @@ function setupCursorAccountUI() {
     errorEl.classList.add('hidden');
     const result = await window.tokenMonitor.cursor.loginManual(input.value);
     if (!result.ok) {
-      errorEl.textContent = t('settings.cursor.loginFailed', { message: result.error });
+      const message = result.code === 'EXTERNAL_AGENT_ACTIVE'
+        ? t('settings.cursor.agentActive')
+        : result.error;
+      errorEl.textContent = t('settings.cursor.loginFailed', { message });
       errorEl.classList.remove('hidden');
       return;
     }
     input.value = '';
-    await refreshCursorStatus();
-    setCursorAccountExpanded(false);
+    state.cursorAccount = { status: result.status, error: '', busy: false };
+    renderCursorStatus();
+    setCursorManualExpanded(false);
     await refreshStats({ force: true });
   });
 
-  refreshCursorStatus();
+  refreshCursorStatus({ discover: true });
 
   const opencodeToggle = document.getElementById('opencodeSettingsToggle');
   if (opencodeToggle) {
@@ -16154,8 +16308,24 @@ function setupCursorAccountUI() {
       window.tokenMonitor.openExternal(volcenginePlatformUrl());
     });
 
+    document.getElementById('volcengineAgentToggle')?.addEventListener('click', () => {
+      setVolcengineAgentExpanded(document.getElementById('volcengineAgentDetails')?.classList.contains('hidden'));
+    });
+    setVolcengineAgentExpanded(false);
+
+    document.getElementById('volcengineAgentClearButton')?.addEventListener('click', async () => {
+      await saveSettings({
+        volcengineAgentAccessKeyId: '', volcengineAgentSecretAccessKey: '', volcengineAgentRegion: ''
+      });
+      renderExternalProviderStatus('volcengine');
+      await refreshStats({ force: true });
+    });
+
     document.getElementById('volcengineLogoutButton').addEventListener('click', async () => {
-      await saveSettings({ volcengineAccessKeyId: '', volcengineSecretAccessKey: '', volcengineRegion: '' });
+      await saveSettings({
+        volcengineAccessKeyId: '', volcengineSecretAccessKey: '', volcengineRegion: '',
+        volcengineAgentAccessKeyId: '', volcengineAgentSecretAccessKey: '', volcengineAgentRegion: ''
+      });
       clearExternalProviderCheckPending('volcengine');
       clearExternalProviderPendingStatus('volcengine');
       renderExternalProviderStatus('volcengine');
@@ -16170,6 +16340,9 @@ function setupCursorAccountUI() {
       const accessKeyInput = document.getElementById('volcengineAccessKeyInput');
       const secretInput = document.getElementById('volcengineSecretAccessKeyInput');
       const regionInput = document.getElementById('volcengineRegionInput');
+      const agentAccessKeyInput = document.getElementById('volcengineAgentAccessKeyInput');
+      const agentSecretInput = document.getElementById('volcengineAgentSecretAccessKeyInput');
+      const agentRegionInput = document.getElementById('volcengineAgentRegionInput');
       const errorEl = document.getElementById('volcengineErrorMessage');
       errorEl.classList.add('hidden');
       const accessKeyValue = String(accessKeyInput.value || '').trim();
@@ -16179,15 +16352,31 @@ function setupCursorAccountUI() {
         errorEl.classList.remove('hidden');
         return;
       }
+      // Only sent when the user actually filled the override in, so saving the
+      // Coding Plan key again cannot silently wipe a separate Agent account.
+      const agentAccessKeyValue = String(agentAccessKeyInput?.value || '').trim();
+      const agentSecretValue = String(agentSecretInput?.value || '').trim();
+      if (agentAccessKeyValue && !agentSecretValue) {
+        errorEl.textContent = t('settings.volcengine.agentSecretRequired');
+        errorEl.classList.remove('hidden');
+        return;
+      }
       try {
         markExternalProviderCheckPending('volcengine');
         await saveSettings({
           volcengineAccessKeyId: accessKeyInput.value,
           volcengineSecretAccessKey: secretInput.value,
-          volcengineRegion: regionInput.value || 'cn-beijing'
+          volcengineRegion: regionInput.value || 'cn-beijing',
+          ...(agentAccessKeyValue ? {
+            volcengineAgentAccessKeyId: agentAccessKeyValue,
+            volcengineAgentSecretAccessKey: agentSecretValue,
+            volcengineAgentRegion: agentRegionInput?.value || 'cn-beijing'
+          } : {})
         });
         accessKeyInput.value = '';
         secretInput.value = '';
+        if (agentAccessKeyInput) agentAccessKeyInput.value = '';
+        if (agentSecretInput) agentSecretInput.value = '';
         renderExternalProviderStatus('volcengine');
         await refreshStats({ force: true });
         setExternalAccountExpanded('volcengine', !externalProviderAccountLinked('volcengine'));

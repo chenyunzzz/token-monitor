@@ -683,21 +683,32 @@
                 </span>
               </button>
               <div id="cursorSettingsDetails" class="cursor-settings-details hidden">
-                <div class="settings-actions">
-                  <button id="cursorLoginButton" data-i18n="settings.cursor.openBrowser">Open cursor.com in browser</button>
-                  <button id="cursorLogoutButton" class="hidden" data-i18n="settings.common.logout">Logout</button>
-                  <button id="cursorRefreshButton" class="hidden" data-i18n="settings.common.refresh">Refresh</button>
-                </div>
-                <div id="cursorManualPanel">
-                  <p class="settings-note">
-                    <strong>1.</strong> <span data-i18n="settings.cursor.step1Before">Open</span> <code>cursor.com/settings</code> <span data-i18n="settings.cursor.step1After">in your browser (button above).</span><br>
-                    <strong>2.</strong> <span data-i18n="settings.cursor.step2Before">Open DevTools (F12 or Cmd+Opt+I) -> Application/Storage -> Cookies -></span> cursor.com.<br>
-                    <strong>3.</strong> <span data-i18n="settings.cursor.step3Before">Copy the</span> <code>WorkosCursorSessionToken</code> <span data-i18n="settings.cursor.step3After">value.</span><br>
-                    <strong>4.</strong> <span data-i18n="settings.cursor.step4">Paste it below and click Save.</span>
-                  </p>
-                  <textarea id="cursorManualInput" rows="3" spellcheck="false" placeholder="WorkosCursorSessionToken=..." data-i18n-placeholder="settings.cursor.manualPlaceholder"></textarea>
-                  <div class="settings-actions">
-                    <button id="cursorManualSubmit" data-i18n="settings.cursor.saveToken">Save token</button>
+                <p class="settings-note" data-i18n="settings.cursor.accountsNote">Token Monitor automatically detects accounts signed in through the Cursor desktop app. Uncheck an account to stop monitoring its limits; account-level token usage still includes every saved account.</p>
+                <p id="cursorAgentActiveNote" class="settings-note hidden" data-i18n="settings.cursor.agentActive">Stop the headless agent before adding or removing Cursor accounts.</p>
+                <div id="cursorAccountList" class="managed-account-list"></div>
+                <div id="cursorManualPanel" class="opencode-add-form">
+                  <button id="cursorAddAccountButton" class="opencode-add-summary" type="button" aria-expanded="false" aria-controls="cursorManualDetails">
+                    <svg class="add-icon" width="14" height="14" viewBox="0 0 14 14" fill="none">
+                      <path d="M7 1v12M1 7h12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+                    </svg>
+                    <span data-i18n="settings.cursor.addManual">Add account</span>
+                  </button>
+                  <div id="cursorManualDetails" class="opencode-add-details accordion-animated-container hidden">
+                    <div class="accordion-animation-inner opencode-add-body">
+                      <div class="settings-actions">
+                        <button id="cursorLoginButton" data-i18n="settings.cursor.openBrowser">Open Cursor dashboard</button>
+                      </div>
+                      <p class="settings-note">
+                        <strong>1.</strong> <span data-i18n="settings.cursor.step1Before">Open</span> <code>cursor.com/dashboard</code> <span data-i18n="settings.cursor.step1After">in your browser using the button above, then sign in.</span><br>
+                        <strong>2.</strong> <span data-i18n="settings.cursor.step2Before">Open DevTools (F12 or Cmd+Opt+I) -> Application/Storage -> Cookies -></span> cursor.com.<br>
+                        <strong>3.</strong> <span data-i18n="settings.cursor.step3Before">Copy the</span> <code>WorkosCursorSessionToken</code> <span data-i18n="settings.cursor.step3After">value.</span><br>
+                        <strong>4.</strong> <span data-i18n="settings.cursor.step4">Paste it below and click Save.</span>
+                      </p>
+                      <textarea id="cursorManualInput" rows="3" spellcheck="false" placeholder="WorkosCursorSessionToken=..." data-i18n-placeholder="settings.cursor.manualPlaceholder" aria-label="Cursor token" data-i18n-aria-label="settings.cursor.tokenLabel"></textarea>
+                      <div class="settings-actions">
+                        <button id="cursorManualSubmit" data-i18n="settings.cursor.saveToken">Save token</button>
+                      </div>
+                    </div>
                   </div>
                 </div>
                 <div id="cursorErrorMessage" class="settings-note error hidden"></div>
@@ -964,10 +975,10 @@
                   <button id="volcengineRefreshButton" data-i18n="settings.common.refresh">Refresh</button>
                 </div>
                 <div id="volcengineManualPanel">
-                  <p class="settings-note" data-i18n="settings.volcengine.note">Paste an Ark API key, or use a Volcengine access key ID with the secret field for Coding Plan usage.</p>
+                  <p class="settings-note" data-i18n="settings.volcengine.note">Paste an Ark API key, or use a Volcengine access key ID with the secret field. An access key reads both the Coding Plan and the Agent Plan.</p>
                   <div class="settings-row">
-                    <label for="volcengineAccessKeyInput" data-i18n="settings.volcengine.accessKeyId">API key / Access key ID</label>
-                    <input id="volcengineAccessKeyInput" type="password" spellcheck="false" placeholder="ark-... or AKLT..." data-i18n-placeholder="settings.volcengine.accessKeyPlaceholder" />
+                    <label for="volcengineAccessKeyInput" data-i18n="settings.volcengine.accessKeyId">Access key ID / API key</label>
+                    <input id="volcengineAccessKeyInput" type="password" spellcheck="false" placeholder="AKLT... or ark-..." data-i18n-placeholder="settings.volcengine.accessKeyPlaceholder" />
                   </div>
                   <div class="settings-row">
                     <label for="volcengineSecretAccessKeyInput" data-i18n="settings.volcengine.secretAccessKey">Secret access key</label>
@@ -976,6 +987,35 @@
                   <div class="settings-row">
                     <label for="volcengineRegionInput" data-i18n="settings.volcengine.region">Region (optional)</label>
                     <input id="volcengineRegionInput" type="text" spellcheck="false" placeholder="cn-beijing" data-i18n-placeholder="settings.volcengine.regionPlaceholder" />
+                  </div>
+                  <div id="volcengineAgentPanel" class="opencode-add-form">
+                    <button id="volcengineAgentToggle" class="opencode-add-summary" type="button" aria-expanded="false" aria-controls="volcengineAgentDetails">
+                      <svg class="add-icon" width="14" height="14" viewBox="0 0 14 14" fill="none">
+                        <path d="M7 1v12M1 7h12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+                      </svg>
+                      <span data-i18n="settings.volcengine.agentToggle">Agent Plan is on a different account</span>
+                      <span id="volcengineAgentConfigured" class="tool-status-tag tool-status-tag-ok hidden" data-i18n="settings.volcengine.agentConfigured">Set</span>
+                    </button>
+                    <div id="volcengineAgentDetails" class="opencode-add-details accordion-animated-container hidden">
+                      <div class="accordion-animation-inner opencode-add-body">
+                        <p class="settings-note" data-i18n="settings.volcengine.agentNote">Leave empty to read the Agent Plan with the access key above. Fill these in only when the Agent Plan was bought on a different Volcengine account.</p>
+                        <div class="settings-row">
+                          <label for="volcengineAgentAccessKeyInput" data-i18n="settings.volcengine.agentAccessKeyId">Agent access key ID</label>
+                          <input id="volcengineAgentAccessKeyInput" type="password" spellcheck="false" placeholder="AKLT..." data-i18n-placeholder="settings.volcengine.agentAccessKeyPlaceholder" />
+                        </div>
+                        <div class="settings-row">
+                          <label for="volcengineAgentSecretAccessKeyInput" data-i18n="settings.volcengine.agentSecretAccessKey">Agent secret access key</label>
+                          <input id="volcengineAgentSecretAccessKeyInput" type="password" spellcheck="false" placeholder="..." data-i18n-placeholder="settings.volcengine.secretKeyPlaceholder" />
+                        </div>
+                        <div class="settings-row">
+                          <label for="volcengineAgentRegionInput" data-i18n="settings.volcengine.agentRegion">Agent region (optional)</label>
+                          <input id="volcengineAgentRegionInput" type="text" spellcheck="false" placeholder="cn-beijing" data-i18n-placeholder="settings.volcengine.regionPlaceholder" />
+                        </div>
+                        <div class="settings-actions">
+                          <button id="volcengineAgentClearButton" class="hidden" data-i18n="settings.volcengine.agentClear">Use the main account</button>
+                        </div>
+                      </div>
+                    </div>
                   </div>
                   <div class="settings-actions">
                     <button id="volcengineCredentialsSubmit" data-i18n="settings.volcengine.saveCredentials">Save credentials</button>

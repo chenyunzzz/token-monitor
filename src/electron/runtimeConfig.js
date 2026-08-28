@@ -11,6 +11,15 @@ const { normalizeSyncUploadIntervalMs } = require('../shared/syncUploadInterval'
 
 const DEFAULT_ALL_TIME_SINCE = '2024-01-01';
 
+function normalizeCursorAccountIds(value) {
+  if (!Array.isArray(value)) return [];
+  return [...new Set(value
+    .map((id) => String(id || '').trim())
+    .filter((id) => id && id.length <= 256))];
+}
+
+const normalizeCursorDisabledAccountIds = normalizeCursorAccountIds;
+
 const MODE_STRUCTURAL_KEYS = Object.freeze([
   'hubMode',
   'hubUrl',
@@ -55,11 +64,13 @@ const LIMITS_RECONFIGURE_KEYS = Object.freeze([
   'limitProviders',
   'limitsRefreshMode',
   'limitsRefreshMs',
+  'cursorDisabledAccountIds',
   'opencodeLocalLimitsEnabled'
 ]);
 const SINK_STRUCTURAL_KEYS = Object.freeze(['syncUploadIntervalMs']);
 const LIMIT_PROVIDER_SETTING_KEYS = Object.freeze({
   claude: ['claudeWebCookie'],
+  cursor: ['cursorDisabledAccountIds'],
   opencode: ['opencodeCookie', 'opencodeProfiles', 'opencodeLocalLimitsEnabled'],
   openrouter: ['openrouterProfiles'],
   deepseek: ['deepseekApiKey'],
@@ -67,7 +78,10 @@ const LIMIT_PROVIDER_SETTING_KEYS = Object.freeze({
   copilot: ['copilotApiToken', 'copilotEnterpriseHost'],
   zai: ['zaiApiKey', 'zaiApiRegion'],
   zaiteam: ['zaiTeamApiKey', 'zaiTeamOrganizationId', 'zaiTeamProjectId'],
-  volcengine: ['volcengineAccessKeyId', 'volcengineSecretAccessKey', 'volcengineRegion'],
+  volcengine: [
+    'volcengineAccessKeyId', 'volcengineSecretAccessKey', 'volcengineRegion',
+    'volcengineAgentAccessKeyId', 'volcengineAgentSecretAccessKey', 'volcengineAgentRegion'
+  ],
   qoder: ['qoderCookie', 'qoderSite'],
   trae: ['traeAccessToken', 'traeDeviceId'],
   // The desktop widget auto-detects WorkBuddy when the provider itself is
@@ -152,6 +166,7 @@ function limitsConfigFromSettings(settings = {}, context = {}) {
     limitProviders: settings.limitProviders ?? context.defaultLimitProviders,
     limitsRefreshMode: normalizeLimitsRefreshMode(settings.limitsRefreshMode),
     limitsRefreshMs: normalizeLimitsRefreshMs(settings.limitsRefreshMs),
+    cursorDisabledAccountIds: normalizeCursorDisabledAccountIds(settings.cursorDisabledAccountIds),
     claudeWebCookie: settings.claudeWebCookie
       || env.CLAUDE_WEB_COOKIE
       || '',
@@ -173,6 +188,9 @@ function limitsConfigFromSettings(settings = {}, context = {}) {
     volcengineAccessKeyId: settings.volcengineAccessKeyId || '',
     volcengineSecretAccessKey: settings.volcengineSecretAccessKey || '',
     volcengineRegion: settings.volcengineRegion || '',
+    volcengineAgentAccessKeyId: settings.volcengineAgentAccessKeyId || '',
+    volcengineAgentSecretAccessKey: settings.volcengineAgentSecretAccessKey || '',
+    volcengineAgentRegion: settings.volcengineAgentRegion || '',
     qoderCookie: settings.qoderCookie || '',
     qoderSite: settings.qoderSite || 'global',
     traeAccessToken: settings.traeAccessToken
@@ -275,6 +293,8 @@ module.exports = {
   envelopeFromSettings,
   limitsConfigFromSettings,
   normalizeAllTimeSince,
+  normalizeCursorAccountIds,
+  normalizeCursorDisabledAccountIds,
   usageConfigFingerprint,
   usageConfigFromSettings
 };

@@ -662,6 +662,7 @@ body.is-windows.floating-bubble-collapsed-right .floating-bubble-tab {
 .settings-panel .settings-item.hidden { display: none; }
 #windowsBackdropNote.hidden { display: none; }
 #limitsRefreshAdaptiveNote.hidden { display: none; }
+#volcengineAgentConfigured.hidden { display: none; }
 .settings-item-text {
   flex: 1 1 auto;
   min-width: 0;
@@ -6080,6 +6081,12 @@ html.is-windows .limit-live-badge {
 .opencode-add-details {
   margin-top: 8px;
 }
+/* Cursor sits below both the account list and its own provider copy, so the
+   shared add-details margin doubles the visual step before the first action.
+   The form wrapper already supplies the same separation used by MiMo. */
+#cursorManualDetails {
+  margin-top: 0;
+}
 .opencode-add-body {
   display: flex;
   flex-direction: column;
@@ -6108,6 +6115,20 @@ html.is-windows .limit-live-badge {
   height: 30px;
   box-sizing: border-box;
   font-size: 12px;
+}
+/* The Agent Plan override borrows the disclosure chrome above, but that form's
+   rows put a short label beside its input, and these labels are full field
+   names, so the three inputs ended up at three different widths. Fall back to
+   the stacked row the rest of the Volcengine card already uses. */
+#volcengineAgentDetails .settings-row {
+  display: block;
+}
+#volcengineAgentDetails .settings-row label {
+  white-space: normal;
+}
+#volcengineAgentDetails .settings-row :is(input, select) {
+  height: auto;
+  font-size: inherit;
 }
 .opencode-add-body textarea {
   width: 100%;
