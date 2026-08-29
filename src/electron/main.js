@@ -3450,7 +3450,6 @@ function startSyncCollector() {
   });
   const sink = {
     async enqueue(summary, revision) {
-      if (isExternalAgentActive()) { sessionUsageArchive = null; return; }
       const visibleSummary = {
         ...summary,
         syncUploadIntervalMs: syncUploadIntervalMs()
@@ -3490,7 +3489,6 @@ function startHostCollector() {
   stopSyncCollector();
   const sink = {
     enqueue(summary) {
-      if (isExternalAgentActive()) { sessionUsageArchive = null; return; }
       const visibleSummary = summary;
       lastCollectedDevice = { ...visibleSummary, receivedAt: new Date().toISOString() };
       if (!embeddedHub) return;

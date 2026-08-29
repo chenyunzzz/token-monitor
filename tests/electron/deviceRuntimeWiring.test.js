@@ -96,6 +96,17 @@ test('History overlay follows usage producer ownership', () => {
   );
 });
 
+test('WSL agent activity does not suppress the Windows native usage producer', () => {
+  const main = fs.readFileSync(path.join(__dirname, '..', '..', 'src', 'electron', 'main.js'), 'utf8');
+  const syncCollector = main.slice(main.indexOf('function startSyncCollector'), main.indexOf('// Host mode'));
+  const hostCollector = main.slice(main.indexOf('function startHostCollector'), main.indexOf('function stopHostStats'));
+  const externalAgentSinkGuard = /if \(isExternalAgentActive\(\)\) \{ sessionUsageArchive = null; return; \}/;
+
+  assert.doesNotMatch(syncCollector, externalAgentSinkGuard);
+  assert.doesNotMatch(hostCollector, externalAgentSinkGuard);
+  assert.match(main, /separateWslDevice: process\.platform === 'win32'/);
+});
+
 test('pending usage refreshes isolate synchronous failures', async () => {
   const pending = new Map([
     ['cursor', { clientId: 'cursor', options: { forceSync: true } }],
