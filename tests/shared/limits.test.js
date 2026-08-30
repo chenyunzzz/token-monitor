@@ -1268,6 +1268,59 @@ test('normalizeLimitProvider preserves daily windows in canonical order', () => 
   assert.deepEqual(provider.windows.map((window) => window.kind), ['session', 'daily', 'weekly', 'billing']);
 });
 
+test('normalizeLimitProvider keeps canonical Codex lanes ahead of named additional windows', () => {
+  const provider = normalizeLimitProvider({
+    provider: 'codex',
+    status: 'ok',
+    windows: [
+      { kind: 'weekly', label: 'Weekly', limitId: 'gpt-reserve', additional: true, usedPercent: 5 },
+      { kind: 'weekly', limitId: 'codex', usedPercent: 40 },
+      { kind: 'session', label: 'Session', limitId: 'gpt-reserve', additional: true, usedPercent: 10 },
+      { kind: 'session', limitId: 'codex', usedPercent: 20 }
+    ]
+  });
+
+  assert.deepEqual(provider.windows.map((window) => [window.kind, window.label, window.limitId, window.additional]), [
+    ['session', '', 'codex', undefined],
+    ['weekly', '', 'codex', undefined],
+    ['session', 'Session', 'gpt-reserve', true],
+    ['weekly', 'Weekly', 'gpt-reserve', true]
+  ]);
+});
+
+test('normalizeLimitWindow preserves bounded quota identity independently of its display label', () => {
+  const window = normalizeLimitWindow({
+    kind: 'weekly',
+    label: 'A backend quota name that is longer than thirty-two characters',
+    limitId: ' codex_special ',
+    additional: true
+  });
+
+  assert.equal(window.label, '');
+  assert.equal(window.limitId, 'codex_special');
+  assert.equal(window.additional, true);
+  assert.equal('additional' in normalizeLimitWindow({ kind: 'weekly', limitId: 'codex' }), false);
+  assert.equal('limitId' in normalizeLimitWindow({ kind: 'weekly', limitId: 'x'.repeat(129) }), false);
+});
+
+test('normalizeLimitProvider keeps Cursor dashboard quota order across window kinds', () => {
+  const provider = normalizeLimitProvider({
+    provider: 'cursor',
+    status: 'ok',
+    windows: [
+      { kind: 'billing', metric: 'spend', label: 'On-demand spend', used: 2, limit: 20, showMeter: false },
+      { kind: 'weekly', label: 'Grok Bot', usedPercent: 30 },
+      { kind: 'billing', label: 'Other Models', usedPercent: 20 },
+      { kind: 'billing', label: 'Cursor Models', usedPercent: 10 }
+    ]
+  });
+
+  assert.deepEqual(
+    provider.windows.map((window) => window.label),
+    ['Cursor Models', 'Other Models', 'Grok Bot', 'On-demand spend']
+  );
+});
+
 test('normalizeLimitWindow preserves only documented component sources', () => {
   assert.equal(normalizeLimitWindow({ kind: 'session', source: ' local ' }).source, 'local');
   assert.equal(normalizeLimitWindow({ kind: 'weekly', source: 'WEB' }).source, 'web');

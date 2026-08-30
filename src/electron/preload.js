@@ -19,6 +19,7 @@ contextBridge.exposeInMainWorld('tokenMonitor', {
   getSessionDetail: (args) => ipcRenderer.invoke('session:getDetail', args),
   getStreamStatus: () => ipcRenderer.invoke('stream:status'),
   getServiceStatus: (options) => ipcRenderer.invoke('serviceStatus:get', options),
+  getCodexResetForecast: (options) => ipcRenderer.invoke('codexResetForecast:get', options),
   openDashboard: () => ipcRenderer.invoke('dashboard:open'),
   getDashboardHistory: (options) => ipcRenderer.invoke('dashboard:getHistory', options),
   onDashboardHistoryChanged: (callback) => {
@@ -43,6 +44,11 @@ contextBridge.exposeInMainWorld('tokenMonitor', {
     const listener = (_event, payload) => { try { callback(payload); } catch (_) {} };
     ipcRenderer.on('stats:push', listener);
     return () => ipcRenderer.removeListener('stats:push', listener);
+  },
+  onWindowVisibilityPush: (callback) => {
+    const listener = (_event, visible) => { try { callback(Boolean(visible)); } catch (_) {} };
+    ipcRenderer.on('window:visibility', listener);
+    return () => ipcRenderer.removeListener('window:visibility', listener);
   },
   onSettingsPush: (callback) => {
     const listener = (_event, payload) => { try { callback(payload); } catch (_) {} };

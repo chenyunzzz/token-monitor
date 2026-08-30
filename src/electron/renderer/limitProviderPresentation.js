@@ -133,6 +133,11 @@
     return label.replace(/^[a-z]/, (letter) => letter.toUpperCase());
   }
 
+  function codexAdditionalQuotaDisplayName(value) {
+    const name = String(value || '').trim();
+    return normalizeId(name) === 'gpt-reserve' ? 'Luna Reserve' : name;
+  }
+
   function antigravityQuotaWindow(window) {
     const kind = normalizeId(window?.kind);
     const suffix = kind === 'session'
@@ -147,6 +152,10 @@
     return { groupLabel, windowLabel: kind === 'session' ? '5-hour' : 'Weekly' };
   }
 
+  function isCanonicalCodexWindow(window) {
+    return window?.additional !== true;
+  }
+
   function compactWindowRemaining(window) {
     const rawRemaining = window?.remainingPercent;
     const remaining = rawRemaining == null || String(rawRemaining).trim() === '' ? null : Number(rawRemaining);
@@ -159,7 +168,9 @@
   }
 
   function limitProviderCompactWindows(providerOrId, windows = []) {
-    if (providerId(providerOrId) !== 'antigravity') return windows;
+    const provider = providerId(providerOrId);
+    if (provider === 'codex') return (windows || []).filter(isCanonicalCodexWindow);
+    if (provider !== 'antigravity') return windows;
     const entries = (windows || []).map((window, index) => ({
       window,
       index,
@@ -421,6 +432,7 @@
   return {
     antigravityQuotaWindow,
     apiKeyAccountStatus,
+    codexAdditionalQuotaDisplayName,
     isCodexLiveAccount,
     limitProviderCapabilityTags,
     limitProviderCompactWindowLabel,

@@ -10,7 +10,7 @@
 // recognize its client id, while its JSONL usage format is stable enough to
 // decode directly.
 const PARSE_LOCAL_CLIENTS = Object.freeze(['proma', 'qodercn', 'dsh']);
-const DEFAULT_CLIENTS = 'claude,codex,opencode,hermes,openclaw,cursor,antigravity,cline,kimi,qwen,grok,copilot,pi,zed,kilocode,commandcode,zcode,kiro,codebuddy,workbuddy,proma,reasonix,dsh,cherrystudio';
+const DEFAULT_CLIENTS = 'claude,codex,opencode,hermes,openclaw,cursor,antigravity,cline,kimi,qwen,grok,copilot,pi,zed,kilocode,commandcode,zcode,kiro,codebuddy,workbuddy,proma,reasonix,dsh,cherrystudio,lmstudio';
 
 function insertClientBefore(clientsCsv, clientId, beforeClientId) {
   const clients = clientsCsv.split(',');

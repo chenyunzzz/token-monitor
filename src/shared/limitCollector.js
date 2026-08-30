@@ -2009,9 +2009,41 @@ function codexWindowKind(name, window) {
   // label below keeps the cadence explicit instead of presenting it as money.
   if (mins === 30 * 24 * 60) return 'billing';
   if (mins >= 7 * 24 * 60) return 'weekly';
+  if (mins >= 24 * 60) return 'daily';
   if (mins === 5 * 60) return 'session';
   if (String(name).toLowerCase() === 'secondary') return 'weekly';
   return 'session';
+}
+
+function codexAdditionalRateLimitWindows(payload = {}) {
+  const rateLimitsById = codexRateLimitsById(payload);
+  const direct = codexDirectRateLimits(payload);
+  // A named bucket is additive only when a canonical quota source exists. If
+  // an old RPC response has nothing but alternate buckets, codexRateLimitSnapshot
+  // may use their consensus as the main quota; publishing them again here would
+  // duplicate the same numbers as both ordinary and additional windows.
+  if (!Object.hasOwn(rateLimitsById, 'codex') && !hasCodexRateLimitWindows(direct)) return [];
+
+  const windows = [];
+  for (const [limitId, snapshot] of Object.entries(rateLimitsById)) {
+    if (limitId === 'codex' || !snapshot || typeof snapshot !== 'object') continue;
+    const limitName = String(snapshot.limitName ?? snapshot.limit_name ?? '').trim() || String(limitId).trim();
+    if (!limitName) continue;
+    for (const key of ['primary', 'secondary']) {
+      const window = snapshot[key];
+      if (!window) continue;
+      windows.push({
+        kind: codexWindowKind(key, window),
+        label: limitName,
+        limitId,
+        additional: true,
+        usedPercent: window.usedPercent ?? window.used_percent,
+        resetsAt: window.resetsAt ?? window.resets_at,
+        windowMinutes: window.windowDurationMins ?? window.window_duration_mins
+      });
+    }
+  }
+  return windows;
 }
 
 function hasCodexRateLimitWindows(snapshot) {
@@ -2411,6 +2443,7 @@ async function waitForCodexEmptyQuotaRetry(deps = {}) {
 
 function mapCodexRateLimitsToProvider(payload, meta = {}) {
   const rateLimits = codexRateLimitSnapshot(payload);
+  const canonicalLimitId = String(rateLimits.limitId ?? rateLimits.limit_id ?? 'codex').trim() || 'codex';
   const windows = [];
   for (const key of ['primary', 'secondary']) {
     const window = rateLimits[key];
@@ -2419,11 +2452,13 @@ function mapCodexRateLimitsToProvider(payload, meta = {}) {
     windows.push({
       kind,
       ...(kind === 'billing' ? { label: 'Monthly' } : {}),
+      limitId: canonicalLimitId,
       usedPercent: window.usedPercent ?? window.used_percent,
       resetsAt: window.resetsAt ?? window.resets_at,
       windowMinutes: window.windowDurationMins ?? window.window_duration_mins
     });
   }
+  windows.push(...codexAdditionalRateLimitWindows(payload));
   return normalizeLimitProvider({
     provider: 'codex',
     accountKey: meta.accountKey || '',
@@ -4104,6 +4139,46 @@ function cursorBillingWindow(label, fields = {}) {
   };
 }
 
+function cursorOnDemandWindow(usage, resetsAt) {
+  const personalUsed = finiteNumber(usage.onDemandUsedUsd) ?? 0;
+  const personalLimit = finiteNumber(usage.onDemandLimitUsd);
+  const teamUsed = finiteNumber(usage.teamOnDemandUsedUsd) ?? 0;
+  const teamLimit = finiteNumber(usage.teamOnDemandLimitUsd);
+  let used;
+  let limit = null;
+  let remaining = null;
+
+  if (personalLimit !== null && personalLimit > 0) {
+    used = personalUsed;
+    limit = personalLimit;
+    remaining = finiteNumber(usage.onDemandRemainingUsd);
+  } else if (teamLimit !== null && teamLimit > 0) {
+    used = teamUsed;
+    limit = teamLimit;
+    remaining = finiteNumber(usage.teamOnDemandRemainingUsd);
+  } else if (personalUsed > 0) {
+    used = personalUsed;
+  } else if (teamUsed > 0) {
+    used = teamUsed;
+  } else {
+    return null;
+  }
+
+  if (limit !== null && remaining === null) remaining = Math.max(0, limit - used);
+  return cursorBillingWindow('On-demand spend', {
+    metric: 'spend',
+    currency: 'USD',
+    usedPercent: percentFromUsedLimit(used, limit),
+    used,
+    limit,
+    remaining,
+    resetsAt,
+    windowMinutes: null,
+    resetDescription: '',
+    showMeter: false
+  });
+}
+
 async function fetchCursorAccountLimits(account, deps = {}) {
   const nowMs = (deps.now || Date.now)();
   const updatedAt = new Date(nowMs).toISOString();
@@ -4139,71 +4214,50 @@ async function fetchCursorAccountLimits(account, deps = {}) {
   const hasRequestUsage = finiteNumber(usage.requestsUsed) !== null
     && finiteNumber(usage.requestsLimit) !== null
     && usage.requestsLimit > 0;
-  const totalPercent = hasRequestUsage
-    ? percentFromUsedLimit(usage.requestsUsed, usage.requestsLimit)
-    : usage.planPercent;
-  const windows = [
-    cursorBillingWindow('Total', {
-      usedPercent: totalPercent,
-      used: hasRequestUsage ? usage.requestsUsed : usage.planUsedUsd,
-      limit: hasRequestUsage ? usage.requestsLimit : usage.planLimitUsd,
-      remaining: hasRequestUsage
-        ? Math.max(0, usage.requestsLimit - usage.requestsUsed)
-        : usage.planRemainingUsd,
+  const windows = [];
+
+  if (hasRequestUsage) {
+    windows.push(cursorBillingWindow('Requests', {
+      usedPercent: percentFromUsedLimit(usage.requestsUsed, usage.requestsLimit),
+      used: usage.requestsUsed,
+      limit: usage.requestsLimit,
+      remaining: Math.max(0, usage.requestsLimit - usage.requestsUsed),
       resetsAt,
       windowMinutes: null,
       resetDescription: usage.membershipType ? `Cursor ${usage.membershipType}` : ''
-    })
-  ];
-
-  if (finiteNumber(usage.autoPercent) !== null) {
-    windows.push(cursorBillingWindow('Auto', {
+    }));
+  } else if (finiteNumber(usage.autoPercent) !== null || finiteNumber(usage.apiPercent) !== null) {
+    if (finiteNumber(usage.autoPercent) !== null) windows.push(cursorBillingWindow('Cursor Models', {
       usedPercent: usage.autoPercent,
       resetsAt,
       windowMinutes: null
     }));
-  }
-
-  if (finiteNumber(usage.apiPercent) !== null) {
-    windows.push(cursorBillingWindow('API', {
+    if (finiteNumber(usage.apiPercent) !== null) windows.push(cursorBillingWindow('Other Models', {
       usedPercent: usage.apiPercent,
+      resetsAt,
+      windowMinutes: null
+    }));
+  } else if (usage.hasOverallUsage && finiteNumber(usage.planPercent) !== null) {
+    windows.push(cursorBillingWindow('Overall', {
+      usedPercent: usage.planPercent,
+      used: usage.planUsedUsd,
+      limit: usage.planLimitUsd,
+      remaining: usage.planRemainingUsd,
       resetsAt,
       windowMinutes: null
     }));
   }
 
-  if (usage.hasOnDemandUsage || finiteNumber(usage.onDemandLimitUsd) !== null || (finiteNumber(usage.onDemandUsedUsd) !== null && usage.onDemandUsedUsd > 0)) {
-    const remaining = finiteNumber(usage.onDemandRemainingUsd)
-      ?? (finiteNumber(usage.onDemandLimitUsd) !== null
-        ? Math.max(0, usage.onDemandLimitUsd - (finiteNumber(usage.onDemandUsedUsd) || 0))
-        : null);
-    windows.push(cursorBillingWindow('Credits', {
-      usedPercent: finiteNumber(usage.onDemandPercent) ?? percentFromUsedLimit(usage.onDemandUsedUsd, usage.onDemandLimitUsd),
-      used: usage.onDemandUsedUsd,
-      limit: usage.onDemandLimitUsd,
-      remaining,
-      resetsAt: null,
-      windowMinutes: null,
+  if (usage.grokBot?.hasNonZeroIncludedLimit === true && finiteNumber(usage.grokBot.usedPercent) !== null) {
+    windows.push({
+      kind: 'weekly',
+      label: 'Grok Bot',
+      usedPercent: usage.grokBot.usedPercent,
+      resetsAt: usage.grokBot.resetsAt || null,
+      windowMinutes: finiteNumber(usage.grokBot.windowMinutes),
       resetDescription: '',
-      showMeter: false
-    }));
-  }
-
-  if (usage.hasTeamOnDemandUsage || finiteNumber(usage.teamOnDemandLimitUsd) !== null || (finiteNumber(usage.teamOnDemandUsedUsd) !== null && usage.teamOnDemandUsedUsd > 0)) {
-    const remaining = finiteNumber(usage.teamOnDemandRemainingUsd)
-      ?? (finiteNumber(usage.teamOnDemandLimitUsd) !== null
-        ? Math.max(0, usage.teamOnDemandLimitUsd - (finiteNumber(usage.teamOnDemandUsedUsd) || 0))
-        : null);
-    windows.push(cursorBillingWindow('Team credits', {
-      usedPercent: finiteNumber(usage.teamOnDemandPercent) ?? percentFromUsedLimit(usage.teamOnDemandUsedUsd, usage.teamOnDemandLimitUsd),
-      used: usage.teamOnDemandUsedUsd,
-      limit: usage.teamOnDemandLimitUsd,
-      remaining,
-      resetsAt: null,
-      windowMinutes: null,
-      resetDescription: '',
-      showMeter: false
-    }));
+      showMeter: true
+    });
   }
 
   if (usage.hasTeamPooledUsage || finiteNumber(usage.teamPooledLimitUsd) !== null || (finiteNumber(usage.teamPooledUsedUsd) !== null && usage.teamPooledUsedUsd > 0)) {
@@ -4221,6 +4275,9 @@ async function fetchCursorAccountLimits(account, deps = {}) {
       resetDescription: 'Shared team usage pool.'
     }));
   }
+
+  const onDemandWindow = cursorOnDemandWindow(usage, resetsAt);
+  if (onDemandWindow) windows.push(onDemandWindow);
 
   return {
     provider: 'cursor',
