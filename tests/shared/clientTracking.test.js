@@ -33,6 +33,8 @@ function readmeTrackedClientIds() {
     .filter((line) => line.split('|').map((cell) => cell.trim())[4] === '✅')
     .map((line) => {
       const icon = line.match(/tools-icon\/([^".]+)\.[a-z]+"/i)?.[1] || '';
+      const label = line.split('|').map((cell) => cell.trim())[2] || '';
+      if (label === 'Oh My Pi') return 'omp';
       return iconToClient[icon] || icon;
     });
 }
@@ -46,7 +48,7 @@ test('clientsCsvForSetting uses defaults only for missing settings', () => {
 
 test('default tracked clients include current tokscale-supported tools', () => {
   const clients = DEFAULT_CLIENTS.split(',');
-  for (const client of ['cline', 'kimi', 'qwen', 'grok', 'copilot', 'pi', 'zed', 'kilocode', 'commandcode', 'zcode', 'kiro', 'codebuddy', 'workbuddy', 'reasonix', 'dsh', 'cherrystudio', 'lmstudio']) {
+  for (const client of ['cline', 'kimi', 'qwen', 'grok', 'copilot', 'pi', 'omp', 'zed', 'kilocode', 'commandcode', 'zcode', 'kiro', 'codebuddy', 'workbuddy', 'reasonix', 'dsh', 'cherrystudio', 'lmstudio']) {
     assert.ok(clients.includes(client), `${client} should be tracked by default`);
   }
 });
@@ -90,4 +92,5 @@ test('clientsCsvForSetting preserves explicit empty tracked-tool selection', () 
 
 test('clientsCsvForSetting normalizes saved client csv values', () => {
   assert.equal(clientsCsvForSetting(' Claude , Codex,,hermes '), 'claude,codex,hermes');
+  assert.equal(clientsCsvForSetting('pi'), 'pi,omp');
 });

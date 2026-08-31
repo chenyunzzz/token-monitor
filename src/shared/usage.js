@@ -190,6 +190,7 @@ function emptyPeriod() {
 function normalizeClientName(value) {
   const raw = normalizeTokscaleClientName(value);
   if (!raw) return null;
+  if (raw === 'omp' || raw.includes('oh my pi')) return 'omp';
   if (raw.includes('claude')) return 'claude';
   if (raw.includes('codex')) return 'codex';
   if (raw.includes('hermes')) return 'hermes';

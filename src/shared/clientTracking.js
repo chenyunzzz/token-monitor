@@ -10,7 +10,7 @@
 // recognize its client id, while its JSONL usage format is stable enough to
 // decode directly.
 const PARSE_LOCAL_CLIENTS = Object.freeze(['proma', 'qodercn', 'dsh']);
-const DEFAULT_CLIENTS = 'claude,codex,opencode,hermes,openclaw,cursor,antigravity,cline,kimi,qwen,grok,copilot,pi,zed,kilocode,commandcode,zcode,kiro,codebuddy,workbuddy,proma,reasonix,dsh,cherrystudio,lmstudio';
+const DEFAULT_CLIENTS = 'claude,codex,opencode,hermes,openclaw,cursor,antigravity,cline,kimi,qwen,grok,copilot,pi,omp,zed,kilocode,commandcode,zcode,kiro,codebuddy,workbuddy,proma,reasonix,dsh,cherrystudio,lmstudio';
 
 function insertClientBefore(clientsCsv, clientId, beforeClientId) {
   const clients = clientsCsv.split(',');
@@ -32,7 +32,14 @@ const KNOWN_CLIENTS = insertClientBefore(
 );
 
 function normalizeClientsCsv(value) {
-  return String(value ?? '').split(',').map((client) => client.trim().toLowerCase()).filter(Boolean).join(',');
+  const clients = String(value ?? '').split(',').map((client) => client.trim().toLowerCase()).filter(Boolean);
+  // Before OMP became a first-class display row, selecting Pi implicitly
+  // included ~/.omp. Preserve that behavior for existing settings and WSL
+  // service environment variables while keeping Pi and OMP separate in data.
+  if (clients.includes('pi') && !clients.includes('omp')) {
+    clients.splice(clients.indexOf('pi') + 1, 0, 'omp');
+  }
+  return [...new Set(clients)].join(',');
 }
 
 function clientsCsvForSetting(value, fallback = DEFAULT_CLIENTS) {

@@ -3,6 +3,18 @@
 const assert = require('node:assert/strict');
 const test = require('node:test');
 
+test('OMP rows stay distinct from Pi rows while sharing a model id', () => {
+  const period = extractUsageFromTokscale({ entries: [
+    { client: 'pi', model: 'deepseek-v4-flash', input: 10 },
+    { client: 'omp', model: 'deepseek-v4-flash', input: 20 }
+  ] });
+  assert.deepEqual(period.clients, { pi: 10, omp: 20 });
+  assert.deepEqual(period.clientModels, {
+    pi: { 'deepseek-v4-flash': 10 },
+    omp: { 'deepseek-v4-flash': 20 }
+  });
+});
+
 const {
   aggregateDevices,
   extractUsageBundleFromTokscale,
@@ -918,7 +930,7 @@ test('extractUsageFromTokscale keeps the canonical Command Code client id', () =
   assert.equal(period.clients.commandcode, 19);
 });
 
-test('normalizeClientName keeps kilo distinct from kilocode and maps both Oh My Pi ids to pi', () => {
+test('normalizeClientName keeps kilo distinct from kilocode and keeps Oh My Pi distinct from pi', () => {
   const period = extractUsageFromTokscale([
     { client: 'kilo', model: 'x', totalTokens: 5 },
     { client: 'Oh My Pi', model: 'x', totalTokens: 7 },
@@ -926,7 +938,8 @@ test('normalizeClientName keeps kilo distinct from kilocode and maps both Oh My 
   ]);
 
   assert.equal(period.clients.kilo, 5);
-  assert.equal(period.clients.pi, 18);
+  assert.equal(period.clients.omp, 18);
+  assert.ok(!('pi' in period.clients));
   assert.ok(!('kilocode' in period.clients));
 });
 
@@ -1004,7 +1017,7 @@ test('qualified model ids provide a narrow provider fallback without changing le
   });
   assert.deepEqual(period.clientProviderModels, {
     dsh: { ollama: { 'deepseek-v4-flash': 12 } },
-    pi: { 'opencode-go': { 'deepseek-v4-flash': 8 } }
+    omp: { 'opencode-go': { 'deepseek-v4-flash': 8 } }
   });
 });
 

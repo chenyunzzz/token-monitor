@@ -5,7 +5,7 @@
 const { REASONIX_CLIENT } = require('./reasonixPaths');
 
 const TOKSCALE_CLIENT_ALIASES = new Map([
-  ['omp', 'pi']
+  ['oh my pi', 'omp']
 ]);
 
 // Canonical Token Monitor identity for client ids emitted by Tokscale. Keep

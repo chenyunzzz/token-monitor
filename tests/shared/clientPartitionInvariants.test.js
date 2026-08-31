@@ -51,6 +51,13 @@ test('every tokscale alias normalizes back to the client that owns it', () => {
   for (const [client, aliases] of Object.entries(TOKSCALE_CLIENT_ALIASES)) {
     assert.ok(trackedClients.includes(client), `alias owner "${client}" is not a tracked client`);
     for (const alias of aliases) {
+      // OMP is a first-class Tokscale source. It is expanded from Pi for
+      // compatibility with older saved settings, but must remain distinct in
+      // the live breakdown so its usage is visible as Oh My Pi.
+      if (client === 'pi' && alias === 'omp') {
+        assert.equal(normalizeClientName(alias), alias);
+        continue;
+      }
       assert.equal(
         normalizeClientName(alias),
         client,

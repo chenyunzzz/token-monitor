@@ -54,7 +54,7 @@ const {
 const { resolveReasonixStatsDir, REASONIX_SOURCE_CHECK_ID } = require('./reasonixPaths');
 const { resolveDshSessionsDir, DSH_SOURCE_CHECK_ID } = require('./dshPaths');
 const { indexDshSessionHeaders, readDshSessionHeader, resolveDshSessionsRoot } = require('./dshSessionFiles');
-const { buildDshHistoryGraph, buildDshPeriods, collectDshRows } = require('./dshUsage');
+const { buildDshHistoryGraph, buildDshPeriods, collectDshPeriods, collectDshRows } = require('./dshUsage');
 const { collectAntigravityCliModels, enrichAntigravityJson } = require('./antigravityCliUsage');
 const {
   createReasonixNativeSessionCache,
@@ -1571,6 +1571,7 @@ async function collectUsageOnce(options) {
   const probeWslStateFn = options.probeWslState || probeWslStateImpl;
   const collectProma = options.collectPromaRows || collectPromaRows;
   const collectDsh = options.collectDshRows || collectDshRows;
+  const collectDshCompact = options.collectDshPeriods || collectDshPeriods;
   // Injectable only for the WSL-status gate, so tests can exercise the win32
   // build path on a non-Windows CI box (the real process.platform stays for
   // tokscale binary resolution, which is genuinely platform-bound).
@@ -1696,15 +1697,20 @@ async function collectUsageOnce(options) {
     }
     if (trackedClientSet.has('dsh') && (!targetRequested || targetClients.includes('dsh'))) {
       try {
-        dshRows = collectDsh({
+        const dshOptions = {
           homeDir: options.homeDir || os.homedir(),
           env: options.env || process.env,
           platform: platformValue,
           ...(anchorUsed
             ? { sinceMs: new Date(collectedAt.getFullYear(), collectedAt.getMonth(), collectedAt.getDate()).getTime() }
             : {})
-        });
-        dshPeriods = buildDshPeriods({ rows: dshRows, now: collectedAt, allTimeSince });
+        };
+        if (sessionDetailsEnabled) {
+          dshRows = collectDsh(dshOptions);
+          dshPeriods = buildDshPeriods({ rows: dshRows, now: collectedAt, allTimeSince });
+        } else {
+          dshPeriods = collectDshCompact({ ...dshOptions, now: collectedAt, allTimeSince });
+        }
         dshPeriods = {
           today: extractUsageFromTokscale(dshPeriods.today, { providerHints }),
           month: extractUsageFromTokscale(dshPeriods.month, { providerHints }),
@@ -2536,7 +2542,8 @@ function clientSourceRoots(clientsCsv, options = {}) {
   const exporter = copilotExporterWatch(home);
   if (exporter) copilotRoots.push(['copilot-otel-exporter', exporter.dir, exporter.file]);
   add('copilot', ...copilotRoots);
-  add('pi', ['pi-sessions', path.join(home, '.pi', 'agent', 'sessions')], ['omp-sessions', path.join(home, '.omp', 'agent', 'sessions')]);
+  add('pi', ['pi-sessions', path.join(home, '.pi', 'agent', 'sessions')]);
+  add('omp', ['omp-sessions', path.join(home, '.omp', 'agent', 'sessions')]);
   // Zed: tokscale reads the XdgData root on every platform AND the native macOS
   // (Application Support) / Windows (LOCALAPPDATA) roots (see tokscale scanner.rs
   // cfg(macos)/cfg(windows) blocks) — watch all three so native mac/win users get

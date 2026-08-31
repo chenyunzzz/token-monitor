@@ -6,7 +6,7 @@ const os = require('node:os');
 const path = require('node:path');
 const test = require('node:test');
 
-const { buildDshHistoryGraph, buildDshPeriods, collectDshRows, parseDshUsageFile } = require('../../src/shared/dshUsage');
+const { buildDshHistoryGraph, buildDshPeriods, collectDshPeriods, collectDshRows, parseDshUsageFile } = require('../../src/shared/dshUsage');
 const { extractUsageFromTokscale } = require('../../src/shared/usage');
 
 const NOW = new Date('2026-08-26T12:00:00.000Z');
@@ -107,6 +107,31 @@ test('dsh parser fills unknown rows when a session has one known model', () => {
   const rows = require('../../src/shared/dshUsage').parseDshUsageText(text, 'single-model/session.jsonl');
   assert.equal(rows[1].model, 'deepseek-v4-flash');
   assert.equal(rows[1].provider, 'opencode-go');
+});
+
+test('headless dsh collection keeps only provider/model aggregates', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'dsh-usage-'));
+  try {
+    const file = writeSession(root, 'compact', [
+      { type: 'session', id: 'compact' },
+      record({ seq: 1, time: '2026-08-26T08:00:00Z', provider: 'ollama', model: 'm', input: 10, output: 1, id: 'one' }),
+      record({ seq: 2, time: '2026-08-26T08:01:00Z', provider: 'ollama', model: 'm', input: 20, output: 2, id: 'two' })
+    ]);
+    const periods = collectDshPeriods({
+      roots: [path.dirname(path.dirname(file))],
+      now: NOW,
+      allTimeSince: '2026-01-01'
+    });
+    assert.equal(periods.today.entries.length, 1);
+    assert.deepEqual(periods.today.entries[0], {
+      client: 'dsh', model: 'm', provider: 'ollama', input: 30, output: 3,
+      cacheRead: 0, cacheWrite: 0, reasoning: 0, totalTokens: 33,
+      messageCount: 2, startedAt: '2026-08-26T08:00:00.000Z',
+      lastUsedAt: '2026-08-26T08:01:00.000Z', cost: 0
+    });
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test('dsh parser keeps unknown rows when a session has multiple models', () => {

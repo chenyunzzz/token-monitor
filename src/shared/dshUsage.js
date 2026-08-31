@@ -297,6 +297,71 @@ function buildDshPeriods(options = {}) {
   };
 }
 
+function compactDshRowInto(grouped, row, options = {}) {
+  const provider = String(row.provider || '').trim();
+  const model = String(row.model || 'unknown').trim() || 'unknown';
+  const key = `${provider}\u0000${model}`;
+  let target = grouped.get(key);
+  if (!target) {
+    target = {
+      client: 'dsh', model, ...(provider ? { provider } : {}),
+      input: 0, output: 0, cacheRead: 0, cacheWrite: 0, reasoning: 0,
+      totalTokens: 0, messageCount: 0, startedAt: '', lastUsedAt: '', cost: 0
+    };
+    grouped.set(key, target);
+  }
+  target.input += numberValue(row.input);
+  target.output += numberValue(row.output);
+  target.cacheRead += numberValue(row.cacheRead);
+  target.cacheWrite += numberValue(row.cacheWrite);
+  target.reasoning += numberValue(row.reasoning);
+  target.totalTokens += numberValue(row.totalTokens);
+  target.messageCount += numberValue(row.messageCount || 1);
+  target.cost += rowCost(row, options.pricingByModel);
+  const startedAt = timestampMs(row.startedAt);
+  const lastUsedAt = timestampMs(row.lastUsedAt);
+  if (startedAt && (!target.startedAt || startedAt < timestampMs(target.startedAt))) {
+    target.startedAt = new Date(startedAt).toISOString();
+  }
+  if (lastUsedAt && lastUsedAt > timestampMs(target.lastUsedAt)) {
+    target.lastUsedAt = new Date(lastUsedAt).toISOString();
+  }
+}
+
+function collectDshPeriods(options = {}) {
+  const roots = Array.isArray(options.roots)
+    ? options.roots
+    : [options.sessionsRoot || resolveDshSessionsRoot({
+      homeDir: options.homeDir,
+      env: options.env,
+      platform: options.platform
+    })];
+  const buckets = { today: new Map(), month: new Map(), allTime: new Map() };
+  const now = options.now || Date.now();
+  const todayStart = periodStart(now, 'today');
+  const monthStart = periodStart(now, 'month');
+  const allTimeStart = timestampMs(options.allTimeSince);
+  for (const root of roots.filter(Boolean)) {
+    for (const filePath of dshSessionFiles(root)) {
+      // Rows are released after this file. This bounds the high-cardinality
+      // portion of the scan even when the sessions directory is very large.
+      const rows = parseDshUsageFile(filePath, options);
+      for (const row of rows) {
+        const lastUsedAt = timestampMs(row.lastUsedAt);
+        if (!lastUsedAt) continue;
+        if (lastUsedAt >= todayStart) compactDshRowInto(buckets.today, row, options);
+        if (lastUsedAt >= monthStart) compactDshRowInto(buckets.month, row, options);
+        if (!allTimeStart || lastUsedAt >= allTimeStart) compactDshRowInto(buckets.allTime, row, options);
+      }
+    }
+  }
+  return {
+    today: { groupBy: 'client,provider,model', entries: [...buckets.today.values()] },
+    month: { groupBy: 'client,provider,model', entries: [...buckets.month.values()] },
+    allTime: { groupBy: 'client,provider,model', entries: [...buckets.allTime.values()] }
+  };
+}
+
 function localDateKey(timestamp) {
   const date = new Date(timestamp);
   if (Number.isNaN(date.getTime())) return '';
@@ -340,6 +405,7 @@ function buildDshHistoryGraph(options = {}) {
 module.exports = {
   buildDshHistoryGraph,
   buildDshPeriods,
+  collectDshPeriods,
   collectDshRows,
   parseDshUsageFile,
   parseDshUsageText

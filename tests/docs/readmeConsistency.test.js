@@ -39,7 +39,7 @@ const supportedToolIds = (text, file) => text
   .map((row) => {
     const id = row.match(/tools-icon\/([^".]+)\.[a-z]+"/i)?.[1];
     assert.ok(id, `${file}: no tool icon id found in row: ${row}`);
-    return id;
+    return row.split('|')[2].trim() === 'Oh My Pi' ? 'omp' : id;
   });
 
 const supportedToolOrder = [
@@ -55,7 +55,8 @@ const supportedToolOrder = [
   'Qwen CLI',
   'Grok Build',
   'GitHub Copilot',
-  'Pi / Oh My Pi',
+  'Pi',
+  'Oh My Pi',
   'Zed',
   'Kilo Code',
   'Command Code',
@@ -92,6 +93,7 @@ const supportedToolIdOrder = [
   'xai',
   'copilot',
   'pi',
+  'omp',
   'zed',
   'kilocode',
   'commandcode',

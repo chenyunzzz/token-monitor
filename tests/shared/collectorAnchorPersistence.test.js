@@ -31,7 +31,8 @@ const baseOptions = {
   deviceId: 'test-device',
   agentVersion: 'test',
   limitsEnabled: false,
-  historyEnabled: false
+  historyEnabled: false,
+  wslScanEnabled: false
 };
 
 test('configFingerprint normalizes clients and includes allTimeSince and project tracking', () => {
