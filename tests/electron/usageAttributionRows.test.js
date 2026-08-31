@@ -103,6 +103,15 @@ test('Tool and Model breakdowns consume the shared token-or-cost rows', () => {
   assert.match(app, /canonicalProviderId\(rawProvider\)/);
 });
 
+test('model breakdown tolerates legacy keyed device snapshots and render errors', () => {
+  const app = fs.readFileSync(path.join(rendererDir, 'app.js'), 'utf8');
+  assert.match(app, /if \(!\(state\.modelTreeCollapsed instanceof Set\)\) state\.modelTreeCollapsed = new Set\(\);/);
+  assert.match(app, /if \(Array\.isArray\(devices\)\) return devices;/);
+  assert.match(app, /Object\.values\(devices\)/);
+  assert.match(app, /console\.warn\('\[renderer\] model tree fallback:/);
+  assert.match(app, /renderRows\(rows, \{ incompleteHint \}\);/);
+});
+
 test('DSH provider variants are grouped by their upstream backend', () => {
   const result = deviceBreakdown.deviceBreakdownForPeriod({
     periods: {
