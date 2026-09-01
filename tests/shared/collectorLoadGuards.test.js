@@ -2148,7 +2148,7 @@ test('watchPathsForClients keeps bounded tool roots but leaves Kiro IDE globalSt
   os.homedir = () => tmp;
   try {
     const { clientDataDirPresence, watchPathsForClients } = freshCollector();
-    const dirs = watchPathsForClients('pi,zed,kilocode,micode,zcode,kiro,codebuddy,workbuddy');
+    const dirs = watchPathsForClients('pi,omp,zed,kilocode,micode,zcode,kiro,codebuddy,workbuddy');
     assert.ok(dirs.includes(path.join(tmp, '.pi', 'agent', 'sessions')));
     assert.ok(dirs.includes(path.join(tmp, '.omp', 'agent', 'sessions')));
     assert.ok(dirs.includes(path.join(tmp, '.local', 'share', 'zed', 'threads')));
@@ -2171,8 +2171,8 @@ test('watchPathsForClients keeps bounded tool roots but leaves Kiro IDE globalSt
     // collector code, not this cross-platform test.
     assert.ok(dirs.includes(path.join(tmp, '.codebuddy', 'projects')));
     assert.ok(dirs.includes(path.join(tmp, '.workbuddy', 'projects')));
-    assert.deepEqual(clientDataDirPresence('pi,zed,kilocode,micode,zcode,kiro,codebuddy,workbuddy'), {
-      pi: true, zed: true, kilocode: true, micode: true, zcode: true, kiro: true, codebuddy: true, workbuddy: true
+    assert.deepEqual(clientDataDirPresence('pi,omp,zed,kilocode,micode,zcode,kiro,codebuddy,workbuddy'), {
+      pi: true, omp: true, zed: true, kilocode: true, micode: true, zcode: true, kiro: true, codebuddy: true, workbuddy: true
     });
   } finally {
     os.homedir = originalHomedir;

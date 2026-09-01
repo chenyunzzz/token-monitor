@@ -512,19 +512,21 @@ test('lazy write ownership is checked after the archive read', () => {
   assert.equal(writes, 0);
 });
 
-test('durable archive canonicalizes OMP into Pi before identity and reconstruction', () => {
+test('durable archive preserves OMP as a distinct identity during reconstruction', () => {
   const archive = captureDailyHistoryArchive({}, graph('2026-07-18', [
     client('pi', 'gpt', 10, 1, 1),
     client('omp', 'gpt', 20, 2, 1)
   ]), { todayKey: '2026-07-18' });
   const observations = Object.values(archive.days['2026-07-18'].observations);
-  assert.equal(observations.length, 1);
-  assert.equal(observations[0].client, 'pi');
-  assert.equal(observations[0].tokens, 30);
+  assert.equal(observations.length, 2);
+  assert.deepEqual(
+    observations.map((observation) => [observation.client, observation.tokens]).sort(),
+    [['omp', 20], ['pi', 10]]
+  );
 
   const restored = historyFrom(graphFromDailyHistoryArchive([], archive, { todayKey: '2026-07-18' }));
-  assert.equal(restored.daily[0].perClient.pi.tokens, 30);
-  assert.equal(Object.hasOwn(restored.daily[0].perClient, 'omp'), false);
+  assert.equal(restored.daily[0].perClient.pi.tokens, 10);
+  assert.equal(restored.daily[0].perClient.omp.tokens, 20);
 });
 
 test('durable reconstruction preserves client-specific reasoning output without recounting it', () => {
