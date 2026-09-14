@@ -3047,8 +3047,6 @@ html.is-windows .settings-panel select option {
 .model-tree-metrics > :last-child { min-width: 30px; color: var(--muted); }
 
 .home-panel {
-
-.home-panel {
   position: relative;
   z-index: 1;
   display: grid;
