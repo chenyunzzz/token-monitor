@@ -930,6 +930,39 @@ test('extractUsageFromTokscale keeps model usage grouped by client', () => {
   assert.equal(period.clientModels.codex['gpt-5'], 50);
 });
 
+test('extractUsageFromTokscale keeps same model separate by provider', () => {
+  const period = extractUsageFromTokscale([
+    { client: 'dsh', model: { id: 'deepseek-v4-flash', provider: 'ollama' }, inputTokens: 10 },
+    { client: 'dsh', model: { id: 'deepseek-v4-flash', provider: 'opencode-go' }, inputTokens: 20 },
+    { client: 'codex', model: 'gemini-3.7-flash', provider: 'google', inputTokens: 30 }
+  ]);
+
+  assert.deepEqual(period.clientProviderModels.dsh, {
+    ollama: { 'deepseek-v4-flash': 10 },
+    'opencode-go': { 'deepseek-v4-flash': 20 }
+  });
+  assert.deepEqual(period.clientProviderModels.codex, {
+    google: { 'gemini-3.7-flash': 30 }
+  });
+  assert.deepEqual(period.providerModels, {
+    ollama: { 'deepseek-v4-flash': 10 },
+    'opencode-go': { 'deepseek-v4-flash': 20 },
+    google: { 'gemini-3.7-flash': 30 }
+  });
+});
+
+test('extractUsageFromTokscale detects qualified and nested provider model forms', () => {
+  const period = extractUsageFromTokscale([
+    { client: 'dsh', model: 'ollama/deepseek-v4-flash', inputTokens: 7 },
+    { client: 'dsh', model: { name: 'deepseek-v4-flash', providerId: 'opencode-go' }, inputTokens: 8 }
+  ]);
+
+  assert.deepEqual(period.clientProviderModels.dsh, {
+    ollama: { 'deepseek-v4-flash': 7 },
+    'opencode-go': { 'deepseek-v4-flash': 8 }
+  });
+});
+
 test('extractUsageBundleFromTokscale partitions every aggregate field exactly by client', () => {
   const bundle = extractUsageBundleFromTokscale({
     entries: [
