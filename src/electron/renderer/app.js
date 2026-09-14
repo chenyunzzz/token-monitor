@@ -302,6 +302,7 @@ function normalizeInitialViewValue(value, allowed, fallback) {
 const state = { period: normalizeInitialViewValue(initialViewState.period, viewPeriodValues, 'today'), appUpdate: null, breakdown: normalizeInitialViewValue(initialViewState.breakdown, viewBreakdownValues, 'home'), viewSwitcherOpen: false, viewSwitcherHasOpened: false, limitDetailTooltipHasOpened: false, limitDetailTooltipActive: false, limitDetailTooltipRenderPending: false, settings: null, windowVisible: new URLSearchParams(window.location.search).get('windowHidden') !== '1', stats: null, homeHistory: null, homeHistoryBusy: false, homeHistoryRequested: false, homeHistorySignature: '', homeHistoryRetries: 0, homeHistoryRetryTimer: null, homeActivityScrollLeft: null, homeActivityFollowEnd: true, homeActivityResizeObserver: null, serviceStatus: null, serviceStatusBusy: false, serviceProvidersExpanded: false, trendSettingsExpanded: false, trendsActivating: false, homeSettingsExpanded: false, homeLimitSettingsExpanded: false, limitProviderSettingsExpanded: '', clientHealthExpanded: '', clientSources: clientSourceCacheApi.createClientSourceCache(), clientSourcesKey: '', clientSourcesRequest: 0, subscriptionEditingId: '', subscriptionTopUps: [], subscriptionFormBase: null, subscriptionEditorTransitionId: 0, serviceStatusTicker: null, refreshTimer: null, refreshBusy: false, refreshFeedbackTimer: null, currentTotal: 0, rowSignature: '', streamConnected: false, streamFailure: null, mode: 'idle', appInfo: null, systemDarkUi: false, tokscaleStatus: null, tokscaleCheck: null, tokscaleBusy: false, hubInfo: null, hubBuildStatus: null, cursorAccount: { status: null, error: '' }, cursorAccountExpanded: false, codexAccountExpanded: false, codexAccountError: '', codexSignInBusy: false, codexSignInFlowId: '', codexLoginUrl: '', codexLoginStatus: '', codexLoginOutput: '', codexWorkspaceChoices: [], codexWorkspaceId: '', codexActiveAccount: null, codexPendingActiveAccount: null, codexPendingActiveAccountUntil: 0, codexPendingActiveAccountTimer: null, codexSystemSwitchingAccountId: '', codexSystemSwitchErrorAccountId: '', codexSystemSwitchError: '', codexSwitchPopoverHasOpened: false, codexSwitchPopoverActive: false, codexSwitchPopoverRenderPending: false, customPricingExpanded: false, claudeAccountExpanded: false, claudePendingCheckSince: 0, opencodeProfileCount: 0, opencodeCookieExpanded: false, openrouterProfileCount: 0, openrouterAccountExpanded: false, thirdPartyProfileCount: 0, thirdPartyAccountExpanded: false, deepseekAccountExpanded: false, deepseekPendingCheckSince: 0, minimaxAccountExpanded: false, minimaxPendingCheckSince: 0, zaiAccountExpanded: false, zaiPendingCheckSince: 0, zaiteamAccountExpanded: false, zaiteamPendingCheckSince: 0, volcengineAccountExpanded: false, volcenginePendingCheckSince: 0, volcengineAgentExpanded: false, qoderAccountExpanded: false, qoderPendingCheckSince: 0, commandcodeAccountExpanded: false, commandcodePendingCheckSince: 0, kimiAccountExpanded: false, kimiPendingCheckSince: 0, ollamaAccountExpanded: false, ollamaPendingCheckSince: 0, mimoAccountExpanded: false, mimoAccountError: '', antigravityAccountExpanded: false, antigravityAccountError: '', antigravitySignInBusy: false, copilotAccountExpanded: false, copilotManualExpanded: false, copilotPendingCheckSince: 0, copilotSignInBusy: false, copilotSignInCancelable: false, copilotSignInFlowId: '', copilotAuthorizeMessage: '', copilotLoginStatus: '', copilotErrorMessage: '', floatingBubble: initialFloatingBubble, suppressInitialNumberAnimation: window.__TOKEN_MONITOR_SUPPRESS_INITIAL_NUMBER_ANIMATION__ === true, openSession: null, detailSort: 'time', recordingWindowShortcut: false, windowShortcutInvalid: false, toolSearchQuery: '', limitProviderSearchQuery: '' };
 state.zedAccountExpanded = false;
 state.zedPendingCheckSince = 0;
+state.modelTreeCollapsed = new Set();
 state.toolDetailMode = 'tokens';
 state.codexResetForecast = null;
 state.codexResetForecastBusy = false;
@@ -2594,6 +2595,569 @@ function deviceRowsForPeriod() {
   }).sort((a, b) => b.value - a.value);
 }
 
+function modelTreeEnvironmentLabel(device) {
+  const platform = String(device?.platform || '').toLowerCase().split('-')[0];
+  if (platform === 'win32') return 'Windows';
+  if (platform === 'linux') return 'WSL';
+  return deviceBreakdownApi.devicePlatformLabel(device?.platform, device?.osName, device?.osVersion) || 'Device';
+}
+
+const SOURCE_PERIOD_MAP_FIELDS = [
+  'clients', 'models', 'clientModels', 'providerModels', 'clientProviderModels'
+];
+
+function subtractSourceMap(base, source) {
+  const result = {};
+  const keys = new Set([...Object.keys(base || {}), ...Object.keys(source || {})]);
+  for (const key of keys) {
+    const baseValue = base?.[key];
+    const sourceValue = source?.[key];
+    if ((baseValue && typeof baseValue === 'object') || (sourceValue && typeof sourceValue === 'object')) {
+      const nested = subtractSourceMap(baseValue, sourceValue);
+      if (Object.keys(nested).length > 0) result[key] = nested;
+      continue;
+    }
+    const value = Math.max(0, (Number(baseValue) || 0) - (Number(sourceValue) || 0));
+    if (value > 0) result[key] = value;
+  }
+  return result;
+}
+
+function addSourceMap(base, addition) {
+  const result = { ...(base || {}) };
+  for (const [key, value] of Object.entries(addition || {})) {
+    if (value && typeof value === 'object') {
+      result[key] = addSourceMap(result[key], value);
+    } else {
+      result[key] = (Number(result[key]) || 0) + (Number(value) || 0);
+    }
+  }
+  return result;
+}
+
+function sourceMapForClients(value, clients) {
+  const allowed = new Set(clients);
+  return Object.fromEntries(Object.entries(value || {})
+    .filter(([key]) => allowed.has(key))
+    .map(([key, entry]) => [key, entry && typeof entry === 'object' ? { ...entry } : entry]));
+}
+
+function sourcePeriodForClients(period, clients) {
+  const result = { ...(period || {}) };
+  for (const field of SOURCE_PERIOD_MAP_FIELDS) result[field] = sourceMapForClients(period?.[field], clients);
+  result.totalTokens = clients.reduce((sum, client) => sum + (Number(period?.clients?.[client]) || 0), 0);
+  result.costUsd = clients.reduce((sum, client) => sum + (Number(period?.clientCosts?.[client]) || 0), 0);
+  return result;
+}
+
+// Windows records from older collectors (and a few sync snapshots produced
+// while the WSL bridge was being restarted) can contain the WSL contribution
+// in `periods` without the companion `sourcePeriods.wsl` metadata. Keep the
+// environment boundary deterministic in that case: Windows' tracked clients
+// are its native partition, while the WSL status marker identifies the other
+// clients as the WSL partition. This is a presentation fallback only; it does
+// not invent tokens or change the aggregate totals.
+function modelTreeNativeClients(device) {
+  return new Set(
+    Array.isArray(device?.trackedClients) && device.trackedClients.length > 0
+      ? device.trackedClients
+      : ['codex']
+  );
+}
+
+function inferredWslSourcePeriod(device, mergedPeriod, wslClients) {
+  if (device?.sourcePeriods?.wsl) return device.sourcePeriods.wsl;
+  if (!Array.isArray(wslClients) || wslClients.length === 0) return null;
+  const nativeClients = modelTreeNativeClients(device);
+  const inferredClients = wslClients.filter((client) => !nativeClients.has(client));
+  return inferredClients.length > 0 ? sourcePeriodForClients(mergedPeriod, inferredClients) : null;
+}
+
+function sourcePeriodWithLiveWslResidual(mergedPeriod, sourcePeriod, wslClients) {
+  const clients = [...new Set(wslClients || [])];
+  if (clients.length === 0) return sourcePeriod;
+  const hasSourcePeriod = Boolean(sourcePeriod && typeof sourcePeriod === 'object');
+  const source = hasSourcePeriod ? sourcePeriod : sourcePeriodForClients(mergedPeriod, clients);
+  const result = { ...source };
+  if (hasSourcePeriod) return result;
+  for (const field of SOURCE_PERIOD_MAP_FIELDS) {
+    const residual = sourceMapForClients(
+      subtractSourceMap(mergedPeriod?.[field], source?.[field]),
+      clients
+    );
+    result[field] = addSourceMap(source[field], residual);
+  }
+  const mergedTotal = clients.reduce((sum, client) => sum + (Number(mergedPeriod?.clients?.[client]) || 0), 0);
+  result.totalTokens = Math.max(Number(source.totalTokens || 0), mergedTotal);
+  return result;
+}
+
+function periodWithoutSource(period, source) {
+  if (!source || typeof source !== 'object') return period || {};
+  const result = { ...(period || {}) };
+  for (const field of SOURCE_PERIOD_MAP_FIELDS) result[field] = subtractSourceMap(period?.[field], source?.[field]);
+  result.totalTokens = Math.max(0, (Number(period?.totalTokens) || 0) - (Number(source.totalTokens) || 0));
+  result.costUsd = Math.max(0, (Number(period?.costUsd) || 0) - (Number(source.costUsd) || 0));
+  return result;
+}
+
+function modelTreeWslSourcePeriod(mergedPeriod, sourcePeriod, wslClients) {
+  if (!sourcePeriod || typeof sourcePeriod !== 'object') {
+    return sourcePeriodWithLiveWslResidual(mergedPeriod, sourcePeriod, wslClients);
+  }
+  const clients = [...new Set(wslClients || [])];
+  if (clients.length === 0) return sourcePeriod;
+  const residual = sourcePeriodForClients(periodWithoutSource(mergedPeriod, sourcePeriod), clients);
+  const result = { ...sourcePeriod };
+  for (const field of SOURCE_PERIOD_MAP_FIELDS) {
+    result[field] = addSourceMap(sourcePeriod[field], residual[field]);
+  }
+  result.totalTokens = (Number(sourcePeriod.totalTokens) || 0) + (Number(residual.totalTokens) || 0);
+  result.costUsd = (Number(sourcePeriod.costUsd) || 0) + (Number(residual.costUsd) || 0);
+  return result;
+}
+
+function modelTreePeriodExpired(device, periodName, nowMs = Date.now()) {
+  if (!device || periodName === 'allTime') return false;
+  const endsAt = Date.parse(device.periodWindows?.[periodName]?.endsAt || '');
+  return Number.isFinite(endsAt) && nowMs >= endsAt;
+}
+
+function modelTreeDeviceList(devices) {
+  if (Array.isArray(devices)) return devices;
+  if (!devices) return [];
+  return Object.values(devices);
+}
+
+function modelSourceDevices(periodName = state.period) {
+  const devices = modelTreeDeviceList(fixedPeriodDevices());
+  const liveDevices = devices.filter((device) => !modelTreePeriodExpired(device, periodName));
+  const result = [];
+  for (const device of devices) {
+    // Keep a frozen device snapshot from yesterday out of today's source
+    // tree. The hub excludes the same period during aggregation; rendering it
+    // here would resurrect stale WSL rows and make children exceed the root.
+    if (modelTreePeriodExpired(device, periodName)) continue;
+    const mergedPeriod = device.periods?.[periodName] || {};
+    const sources = device.sourcePeriods || {};
+    const wslClients = device.wslStatus?.withData || [];
+    const sameHostWslPeer = devices.find((peer) => (
+      peer !== device
+      && /^linux(?:-|$)/i.test(peer.platform)
+      && peer.agentRuntime === 'headless-agent'
+      && String(peer.hostname || '').trim().toLowerCase() === String(device.hostname || '').trim().toLowerCase()
+    ));
+    const hasSameHostWslAgent = Boolean(sameHostWslPeer);
+    // Some older Windows snapshots have neither `sourcePeriods` nor a WSL
+    // status marker. A same-host Linux agent is still authoritative evidence
+    // that non-native clients in this Windows snapshot belong to WSL.
+    const peerWslClients = Object.keys(sameHostWslPeer?.periods?.[periodName]?.clients || {});
+    const partitionWslClients = [...new Set([...wslClients, ...peerWslClients])];
+    const sourceIds = new Set(Object.keys(sources));
+    // A same-host WSL agent is the authoritative source once the aggregate
+    // has removed the Windows-side WSL contribution. Do not reconstruct a
+    // second WSL source from the Windows status marker, or native Windows
+    // usage will be labeled as WSL.
+    if (wslClients.length > 0 && !hasSameHostWslAgent) sourceIds.add('wsl');
+    const explicitWslSource = Boolean(sources.wsl);
+    // An explicit WSL source may be a deduplicated residual. If the merged
+    // Windows snapshot still contains newer non-native rows (for example an
+    // Antigravity scan that completed after the WSL agent upload), include
+    // that residual in WSL too. Native clients such as Codex can legitimately
+    // exist in both environments, so never infer their residual blindly.
+    const wslResidualClients = explicitWslSource
+      ? partitionWslClients.filter((client) => !modelTreeNativeClients(device).has(client))
+      : partitionWslClients;
+    const inferredWslSource = inferredWslSourcePeriod(device, mergedPeriod, partitionWslClients);
+    for (const sourceId of sourceIds) {
+      const sourcePeriods = sourceId === 'wsl' && !explicitWslSource
+        ? { [periodName]: inferredWslSource }
+        : sources[sourceId];
+      const sourcePeriod = modelTreeWslSourcePeriod(
+        mergedPeriod,
+        sourcePeriods?.[periodName],
+        sourceId === 'wsl' ? wslResidualClients : []
+      );
+      if (!sourcePeriod || (Number(sourcePeriod.totalTokens || 0) <= 0 && Number(sourcePeriod.costUsd || 0) <= 0)) continue;
+      result.push({
+        ...device,
+        deviceId: `${device.deviceId}:${sourceId}`,
+        platform: sourceId === 'wsl' ? 'linux-x64' : device.platform,
+        osName: sourceId === 'wsl' ? 'WSL' : device.osName,
+        periods: { [periodName]: sourcePeriod },
+        sourceId
+      });
+    }
+    const wslSource = sources.wsl?.[periodName]
+      ? modelTreeWslSourcePeriod(mergedPeriod, sources.wsl[periodName], wslResidualClients)
+      : (inferredWslSource && (!hasSameHostWslAgent || !explicitWslSource) ? inferredWslSource : null);
+    const hostPeriod = periodWithoutSource(mergedPeriod, wslSource);
+    if (Number(hostPeriod.totalTokens || 0) > 0 || Number(hostPeriod.costUsd || 0) > 0) {
+      result.push({ ...device, periods: { [periodName]: hostPeriod }, sourceId: 'windows' });
+    }
+  }
+  return result.length > 0 ? result : liveDevices;
+}
+
+function modelSourceRowsForPeriod(periodName = state.period) {
+  const rowsByIdentity = new Map();
+  for (const device of modelSourceDevices(periodName)) {
+    const sourcePeriod = device.periods?.[periodName] || {};
+    const detail = deviceBreakdownApi.deviceBreakdownForPeriod(device, periodName, {
+      clientLabels,
+      clientColors,
+      fallbackColor: clientColors.default,
+      unattributedLabel: t('dashboard.tooltip.unclassified')
+    });
+    const environment = modelTreeEnvironmentLabel(device);
+    for (const tool of detail.tools) {
+      for (const model of tool.models) {
+        const name = `${environment} / ${tool.name} / ${model.name}`;
+        const identity = `${environment}\u0000${tool.client}\u0000${model.key}`;
+        const existing = rowsByIdentity.get(identity);
+        if (existing) existing.value += model.value;
+        else {
+          rowsByIdentity.set(identity, {
+            key: `${environment}/${tool.client}/${model.key}`,
+            name,
+            value: model.value,
+            color: modelColor(model.name),
+            sourcePeriod
+          });
+        }
+      }
+    }
+  }
+  return [...rowsByIdentity.values()].sort((a, b) => b.value - a.value || a.name.localeCompare(b.name));
+}
+
+function modelTreeProviderGroups(tool) {
+  const groups = new Map();
+  for (const model of tool.models || []) {
+    const rawKey = String(model.key || '');
+    const providerRoute = rawKey.startsWith('provider:') ? rawKey.slice('provider:'.length) : '';
+    const separator = providerRoute.indexOf('/');
+    const provider = separator > 0 ? providerRoute.slice(0, separator) : 'unclassified';
+    const modelKey = separator > 0 ? providerRoute.slice(separator + 1) : rawKey;
+    const groupKey = `${provider}\u0000${modelKey}`;
+    const group = groups.get(provider) || {
+      key: provider,
+      name: provider === 'unclassified' ? t('dashboard.tooltip.unclassified') : providerDisplayName(provider),
+      value: 0,
+      models: new Map()
+    };
+    const modelEntry = group.models.get(groupKey) || {
+      key: modelKey,
+      name: separator > 0 ? providerModelDisplayName(provider, modelKey) : model.name,
+      value: 0
+    };
+    modelEntry.value += Number(model.value || 0);
+    group.models.set(groupKey, modelEntry);
+    group.value += Number(model.value || 0);
+    groups.set(provider, group);
+  }
+  return [...groups.values()]
+    .map((group) => ({ ...group, models: [...group.models.values()] }))
+    .sort((a, b) => b.value - a.value || a.name.localeCompare(b.name))
+    .map((group) => ({
+      ...group,
+      models: group.models.sort((a, b) => b.value - a.value || a.name.localeCompare(b.name))
+    }));
+}
+
+function modelTreeEnvironmentGroups(sources) {
+  const groups = new Map();
+  for (const { device } of sources) {
+    const detail = deviceBreakdownApi.deviceBreakdownForPeriod(device, state.period, {
+      clientLabels,
+      clientColors,
+      fallbackColor: clientColors.default,
+      unattributedLabel: t('dashboard.tooltip.unclassified')
+    });
+    const environment = modelTreeEnvironmentLabel(device);
+    const environmentGroup = groups.get(environment) || { name: environment, value: 0, tools: new Map() };
+    environmentGroup.value += detail.totalTokens;
+    for (const tool of detail.tools) {
+      const toolGroup = environmentGroup.tools.get(tool.client) || {
+        key: tool.client,
+        name: tool.name,
+        value: 0,
+        models: []
+      };
+      toolGroup.value += tool.value;
+      toolGroup.models.push(...tool.models);
+      environmentGroup.tools.set(tool.client, toolGroup);
+    }
+    groups.set(environment, environmentGroup);
+  }
+  return [...groups.values()]
+    .map((group) => ({
+      ...group,
+      tools: [...group.tools.values()]
+        .sort((a, b) => b.value - a.value || a.name.localeCompare(b.name))
+        .map((tool) => ({ ...tool, providers: modelTreeProviderGroups(tool) }))
+    }))
+    .sort((a, b) => {
+      const order = { Windows: 0, WSL: 1 };
+      return (order[a.name] ?? 2) - (order[b.name] ?? 2) || b.value - a.value || a.name.localeCompare(b.name);
+    });
+}
+
+function modelTreeNodesForPeriod(period) {
+  const devices = modelSourceDevices(state.period)
+    .map((device) => ({ device, period: device.periods?.[state.period] || {} }))
+    .filter(({ period: source }) => Number(source.totalTokens || 0) > 0 || Number(source.costUsd || 0) > 0);
+  const sources = devices.length > 0
+    ? devices
+    : [{
+      device: {
+        deviceId: 'local',
+        platform: state.appInfo?.platform || '',
+        periods: { [state.period]: period }
+      },
+      period
+    }];
+  const nodes = [];
+  for (const environmentGroup of modelTreeEnvironmentGroups(sources)) {
+    const environment = environmentGroup.name;
+    const rootKey = `environment:${environment}`;
+    nodes.push({
+      key: rootKey,
+      collapseKey: rootKey,
+      level: 1,
+      name: environment,
+      value: environmentGroup.value,
+      iconKey: environment === 'Windows' ? 'win32' : environment === 'WSL' ? 'linux' : '',
+      iconBreakdown: 'device',
+      hasChildren: environmentGroup.tools.length > 0
+    });
+    if (state.modelTreeCollapsed.has(rootKey)) continue;
+    for (const tool of environmentGroup.tools) {
+      const toolKey = `${rootKey}/agent:${tool.client}`;
+      nodes.push({
+        key: toolKey,
+        collapseKey: toolKey,
+        level: 2,
+        name: tool.name,
+        value: tool.value,
+        iconKey: tool.client,
+        iconBreakdown: 'tool',
+        hasChildren: tool.providers.length > 0
+      });
+      if (state.modelTreeCollapsed.has(toolKey)) continue;
+      for (const provider of tool.providers) {
+        const providerKey = `${toolKey}/provider:${provider.key}`;
+        nodes.push({
+          key: providerKey,
+          collapseKey: providerKey,
+          level: 3,
+          name: provider.name,
+          value: provider.value,
+          iconKey: provider.key,
+          iconBreakdown: 'provider',
+          hasChildren: provider.models.length > 0
+        });
+        if (state.modelTreeCollapsed.has(providerKey)) continue;
+        for (const model of provider.models) {
+          nodes.push({
+            key: `${providerKey}/${model.key}`,
+            level: 4,
+            name: model.key.startsWith('model:')
+              ? `${t('dashboard.tooltip.unclassified')} / ${model.name}`
+              : model.name,
+            value: model.value,
+            iconKey: model.name,
+            iconBreakdown: 'model',
+            hasChildren: false
+          });
+        }
+      }
+    }
+  }
+  return nodes;
+}
+
+function renderModelTree(period) {
+  const nodes = modelTreeNodesForPeriod(period);
+  const total = Math.max(0, Number(period?.totalTokens || 0));
+  const tree = document.createElement('div');
+  tree.className = 'model-tree';
+  let environmentGroup = null;
+  for (const node of nodes) {
+    if (node.level === 1) {
+      environmentGroup = document.createElement('section');
+      environmentGroup.className = 'model-tree-environment';
+      if (node.name === 'WSL') environmentGroup.classList.add('environment-wsl');
+      tree.append(environmentGroup);
+    }
+    const row = document.createElement('div');
+    row.className = `model-tree-row level-${node.level}`;
+    row.style.setProperty('--tree-level', String(node.level));
+    const left = document.createElement('div');
+    left.className = 'model-tree-name';
+    const disclosure = document.createElement('span');
+    disclosure.className = `model-tree-disclosure${node.hasChildren ? '' : ' placeholder'}`;
+    if (node.hasChildren) disclosure.classList.toggle('collapsed', state.modelTreeCollapsed.has(node.collapseKey));
+    left.append(disclosure);
+    const mark = document.createElement('span');
+    const icon = iconKindFor({ key: node.iconKey, platform: node.iconKey, client: node.iconKey }, node.iconBreakdown);
+    if (icon.kind === 'icon') {
+      mark.className = `model-tree-mark row-icon ${icon.iconClass}`;
+    } else {
+      mark.className = 'model-tree-mark dot';
+    }
+    left.append(mark);
+    const name = document.createElement('span');
+    name.className = 'model-tree-label';
+    name.textContent = node.name;
+    left.append(name);
+    const metrics = document.createElement('div');
+    metrics.className = 'model-tree-metrics';
+    const value = document.createElement('span');
+    value.textContent = formatCompact(node.value);
+    const share = document.createElement('span');
+    share.textContent = formatPercent(total > 0 ? node.value / total * 100 : 0);
+    metrics.append(value, share);
+    row.append(left, metrics);
+    if (node.hasChildren) {
+      row.tabIndex = 0;
+      row.setAttribute('role', 'button');
+      row.setAttribute('aria-expanded', String(!state.modelTreeCollapsed.has(node.collapseKey)));
+      const toggle = () => {
+        if (state.modelTreeCollapsed.has(node.collapseKey)) state.modelTreeCollapsed.delete(node.collapseKey);
+        else state.modelTreeCollapsed.add(node.collapseKey);
+        renderModelTree(period);
+      };
+      row.addEventListener('click', toggle);
+      row.addEventListener('keydown', (event) => {
+        if (event.key !== 'Enter' && event.key !== ' ') return;
+        event.preventDefault();
+        toggle();
+      });
+    }
+    (environmentGroup || tree).append(row);
+  }
+  els.breakdown.replaceChildren(tree);
+  state.rowSignature = '';
+}
+
+
+function providerDisplayName(provider) {
+  return window.TokenMonitorProviderPresentation?.providerDisplayName(provider) || provider;
+}
+
+function providerModelDisplayName(provider, model) {
+  const normalizedProvider = String(provider || '').trim().toLowerCase();
+  const normalizedModel = String(model || '').trim().toLowerCase();
+  // Older Antigravity usage snapshots only recorded the provider and emitted
+  // `unknown` for the selected model. Keep the stored bucket intact for exact
+  // totals, but make its meaning explicit in the visible breakdown.
+  return normalizedProvider === 'antigravity' && normalizedModel === 'unknown'
+    ? 'auto-detected'
+    : model;
+}
+
+function modelAttributionRows(period) {
+  const values = {};
+  const costs = {};
+  const metadata = {};
+  const providerModels = period?.providerModels && typeof period.providerModels === 'object'
+    ? period.providerModels
+    : {};
+  const providerTokenTotals = {};
+  const providerCostTotals = {};
+  const providerGroups = new Map();
+  for (const [rawProvider, models] of Object.entries(providerModels)) {
+    const provider = window.TokenMonitorProviderPresentation?.canonicalProviderId(rawProvider) || rawProvider;
+    for (const [model, value] of Object.entries(models || {})) {
+      const tokens = Math.max(0, Number(value) || 0);
+      const cost = Math.max(0, Number(period?.providerModelCosts?.[rawProvider]?.[model]) || 0);
+      const groupKey = `${provider}\u0000${model}`;
+      const group = providerGroups.get(groupKey) || {
+        provider,
+        model,
+        tokens: 0,
+        cost: 0,
+        cacheReadTokens: 0,
+        cacheWriteTokens: 0,
+        outputTokens: 0,
+        unclassifiedTokens: 0
+      };
+      group.tokens += tokens;
+      group.cost += cost;
+      group.cacheReadTokens += Number(period?.providerModelCacheReads?.[rawProvider]?.[model]) || 0;
+      group.cacheWriteTokens += Number(period?.providerModelCacheWrites?.[rawProvider]?.[model]) || 0;
+      group.outputTokens += Number(period?.providerModelOutputs?.[rawProvider]?.[model]) || 0;
+      group.unclassifiedTokens += Number(period?.providerModelUnclassifiedTokens?.[rawProvider]?.[model]) || 0;
+      providerGroups.set(groupKey, group);
+      providerTokenTotals[model] = (providerTokenTotals[model] || 0) + tokens;
+      providerCostTotals[model] = (providerCostTotals[model] || 0) + cost;
+    }
+  }
+  for (const group of providerGroups.values()) {
+    const key = `provider:${group.provider}/${group.model}`;
+    values[key] = group.tokens;
+    costs[key] = group.cost;
+    metadata[key] = {
+      provider: group.provider,
+      model: group.model,
+      name: `${providerDisplayName(group.provider)} / ${providerModelDisplayName(group.provider, group.model)}`,
+      cacheReadTokens: group.cacheReadTokens,
+      cacheWriteTokens: group.cacheWriteTokens,
+      outputTokens: group.outputTokens,
+      unclassifiedTokens: group.unclassifiedTokens
+    };
+  }
+  for (const [model, total] of Object.entries(period?.models || {})) {
+    const tokens = Math.max(0, (Number(total) || 0) - (providerTokenTotals[model] || 0));
+    const cost = Math.max(0, (Number(period?.modelCosts?.[model]) || 0) - (providerCostTotals[model] || 0));
+    if (tokens <= 0 && cost <= 0) continue;
+    values[model] = tokens;
+    costs[model] = cost;
+    metadata[model] = {
+      model,
+      name: model,
+      cacheReadTokens: Math.max(0, (Number(period?.modelCacheReads?.[model]) || 0)
+        - Object.entries(providerModels).reduce((sum, [provider]) => sum + (Number(period?.providerModelCacheReads?.[provider]?.[model]) || 0), 0)),
+      cacheWriteTokens: Math.max(0, (Number(period?.modelCacheWrites?.[model]) || 0)
+        - Object.entries(providerModels).reduce((sum, [provider]) => sum + (Number(period?.providerModelCacheWrites?.[provider]?.[model]) || 0), 0)),
+      outputTokens: Math.max(0, (Number(period?.modelOutputs?.[model]) || 0)
+        - Object.entries(providerModels).reduce((sum, [provider]) => sum + (Number(period?.providerModelOutputs?.[provider]?.[model]) || 0), 0)),
+      unclassifiedTokens: Math.max(0, (Number(period?.modelUnclassifiedTokens?.[model]) || 0)
+        - Object.entries(providerModels).reduce((sum, [provider]) => sum + (Number(period?.providerModelUnclassifiedTokens?.[provider]?.[model]) || 0), 0))
+    };
+  }
+  return periodAttributionRows(period, values, costs).map((row) => ({ ...row, ...(metadata[row.key] || {}) }));
+}
+
+function modelRowsForPeriodWithProviders(period, rankingMetric = state.settings?.modelRankingMetric) {
+  // Keep the aggregate source shape explicit for the renderer contract:
+  // periodAttributionRows(period, period?.models, period?.modelCosts).
+  // Component lookup remains keyed by the aggregate model:
+  // attributionComponent(period, 'modelUnclassifiedTokens', model).
+  const modelRows = modelAttributionRows(period).map(({ key: modelKey, model, name, value, cost, provider, cacheReadTokens, cacheWriteTokens, outputTokens, unclassifiedTokens }) => ({
+    key: modelKey,
+    name: modelKey === usageAttributionRowsApi.UNATTRIBUTED_KEY
+      ? t('dashboard.tooltip.unclassified')
+      : name || model || modelKey,
+    value,
+    cost,
+    color: modelColor(model || modelKey),
+    stale: false,
+    cacheReadTokens: provider ? cacheReadTokens : attributionComponent(period, 'modelCacheReads', modelKey),
+    cacheWriteTokens: provider ? cacheWriteTokens : attributionComponent(period, 'modelCacheWrites', modelKey),
+    outputTokens: provider ? outputTokens : attributionComponent(period, 'modelOutputs', modelKey),
+    unclassifiedTokens: provider ? unclassifiedTokens : attributionComponent(period, 'modelUnclassifiedTokens', modelKey)
+  }));
+  if (modelRows.length > 0) {
+    return usageAttributionRowsApi.rankRowsWithValues(modelRows, rankingMetric);
+  }
+  if (Number(period?.totalTokens || 0) === 0) return [];
+  return toolRowsForPeriod(period);
+}
+
+
+
 function attributionComponent(period, field, key) {
   const aggregateField = {
     clientCacheReads: 'cacheReadTokens',
@@ -2632,24 +3196,7 @@ function toolRowsForPeriod(period) {
 }
 
 function modelRowsForPeriod(period, rankingMetric = state.settings?.modelRankingMetric) {
-  const modelRows = periodAttributionRows(period, period?.models, period?.modelCosts).map(({ key: model, value, cost, unattributed }) => ({
-    key: model,
-    name: model === usageAttributionRowsApi.UNATTRIBUTED_KEY ? t('dashboard.tooltip.unclassified') : model,
-    value,
-    cost,
-    unattributed,
-    color: modelColor(model),
-    stale: false,
-    cacheReadTokens: attributionComponent(period, 'modelCacheReads', model),
-    cacheWriteTokens: attributionComponent(period, 'modelCacheWrites', model),
-    outputTokens: attributionComponent(period, 'modelOutputs', model),
-    unclassifiedTokens: attributionComponent(period, 'modelUnclassifiedTokens', model)
-  }));
-  if (modelRows.length > 0) {
-    return usageAttributionRowsApi.rankRowsWithValues(modelRows, rankingMetric);
-  }
-  if (Number(period?.totalTokens || 0) === 0) return [];
-  return toolRowsForPeriod(period);
+  return modelRowsForPeriodWithProviders(period, rankingMetric);
 }
 
 function sessionRowsForPeriod(period) {
@@ -7788,7 +8335,10 @@ function renderHomeLimitModule() {
 
 function renderHomeModelModule(period) {
   const { module, body } = homeModuleShell('model', t('home.models'), 'model');
-  const rows = homeOverviewApi.homeModelRows(modelRowsForPeriod(period, 'tokens'), period?.totalTokens, 5);
+  const sourceRows = modelSourceRowsForPeriod(state.period);
+  const rows = sourceRows.length > 0
+    ? homeOverviewApi.homeModelRows(sourceRows, period?.totalTokens, 5)
+    : homeOverviewApi.homeModelRows(modelRowsForPeriod(period, 'tokens'), period?.totalTokens, 5);
   if (rows.length === 0) {
     const empty = document.createElement('div');
     empty.className = 'home-module-empty';
@@ -8508,7 +9058,14 @@ function render() {
     } else if (state.breakdown === 'session' && sessionRowsApi.sessionBreakdownIncomplete(state.stats, state.period)) {
       incompleteHint = 'sessions.incomplete';
     }
-    renderRows(rows, { incompleteHint });
+    if (state.breakdown === 'model') {
+      try {
+        renderModelTree(period);
+      } catch (error) {
+        console.warn('[renderer] model tree fallback:', error?.message || error);
+        renderRows(rows, { incompleteHint });
+      }
+    } else renderRows(rows, { incompleteHint });
   }
   
   renderFloatingBubbleContent();

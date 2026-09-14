@@ -1,16 +1,125 @@
 'use strict';
 
 (function exposeDeviceBreakdown(root, factory) {
-  const api = factory();
+  const api = factory(root);
   if (typeof module === 'object' && module.exports) module.exports = api;
   if (root) root.TokenMonitorDeviceBreakdown = api;
-})(typeof window !== 'undefined' ? window : null, function createDeviceBreakdownApi() {
+})(typeof window !== 'undefined' ? window : null, function createDeviceBreakdownApi(root) {
   const UNATTRIBUTED_KEY = '__unattributed';
+  const providerPresentation = root?.TokenMonitorProviderPresentation
+    || (typeof require === 'function' ? require('../../shared/providerPresentation') : null);
 
   function positiveEntries(value) {
     return Object.entries(value || {})
       .map(([key, amount]) => [key, Math.max(0, Number(amount || 0))])
       .filter(([, amount]) => amount > 0);
+  }
+
+  function providerLabel(provider) {
+    return providerPresentation?.providerDisplayName(provider) || provider;
+  }
+
+  function providerModelLabel(provider, model) {
+    const normalizedProvider = String(provider || '').trim().toLowerCase();
+    const normalizedModel = String(model || '').trim().toLowerCase();
+    return normalizedProvider === 'antigravity' && normalizedModel === 'unknown'
+      ? 'auto-detected'
+      : model;
+  }
+
+  function normalizedModelKey(client, model, soleKnownModel) {
+    const normalizedClient = String(client || '').trim().toLowerCase();
+    const normalizedModel = String(model || '').trim().toLowerCase();
+    if (normalizedClient === 'antigravity' && (normalizedModel === 'unknown' || normalizedModel === 'auto-detected')) {
+      return 'auto-detected';
+    }
+    if (normalizedClient === 'dsh' && normalizedModel === 'unknown' && soleKnownModel) {
+      return soleKnownModel;
+    }
+    return String(model || '').trim() || 'unknown';
+  }
+
+  function modelsForClient(period, client, clientValue, unclassifiedLabel) {
+    const legacyModels = positiveEntries(period.clientModels?.[client]);
+    const knownLegacyModels = legacyModels
+      .map(([model]) => String(model || '').trim())
+      .filter((model) => !['', 'unknown', 'auto-detected'].includes(model.toLowerCase()));
+    const soleKnownModel = knownLegacyModels.length === 1 ? knownLegacyModels[0] : '';
+    const legacyTotals = new Map();
+    for (const [model, value] of legacyModels) {
+      const key = normalizedModelKey(client, model, soleKnownModel);
+      legacyTotals.set(key, (legacyTotals.get(key) || 0) + value);
+    }
+    const providerGroups = new Map();
+    for (const [rawProvider, models] of Object.entries(period.clientProviderModels?.[client] || {})) {
+      const provider = providerPresentation?.canonicalProviderId(rawProvider) || rawProvider;
+      const group = providerGroups.get(provider) || {};
+      for (const [model, value] of positiveEntries(models)) {
+        group[model] = (group[model] || 0) + value;
+      }
+      providerGroups.set(provider, group);
+    }
+    const providerRows = [];
+    const accountedByModel = new Map();
+    const providerRowsByKey = new Map();
+    const providerKeysByModel = new Map();
+    for (const [provider, models] of providerGroups) {
+      for (const [model, rawValue] of positiveEntries(models)) {
+        const modelKey = normalizedModelKey(client, model, soleKnownModel);
+        if (provider !== 'unknown' && provider !== 'unclassified') {
+          const providers = providerKeysByModel.get(modelKey) || new Set();
+          providers.add(provider);
+          providerKeysByModel.set(modelKey, providers);
+        }
+        const budget = legacyTotals.has(modelKey)
+          ? Math.max(0, (legacyTotals.get(modelKey) || 0) - (accountedByModel.get(modelKey) || 0))
+          : Math.max(0, clientValue - providerRows.reduce((sum, row) => sum + row.value, 0));
+        const value = Math.min(rawValue, budget);
+        if (value <= 0) continue;
+        accountedByModel.set(modelKey, (accountedByModel.get(modelKey) || 0) + value);
+        const key = `provider:${provider}/${modelKey}`;
+        const existing = providerRowsByKey.get(key);
+        if (existing) existing.value += value;
+        else {
+          const row = {
+            key,
+            name: `${providerLabel(provider)} / ${providerModelLabel(provider, modelKey)}`,
+            value
+          };
+          providerRowsByKey.set(key, row);
+          providerRows.push(row);
+        }
+      }
+    }
+    const rows = [...providerRows];
+    const legacyResiduals = new Map();
+    const legacyLabels = new Map();
+    for (const [model, value] of legacyModels) {
+      const modelKey = normalizedModelKey(client, model, soleKnownModel);
+      legacyResiduals.set(modelKey, (legacyResiduals.get(modelKey) || 0) + value);
+      if (!legacyLabels.has(modelKey) || modelKey !== 'unknown') legacyLabels.set(modelKey, modelKey);
+    }
+    for (const [modelKey, total] of legacyResiduals) {
+      const residual = Math.max(0, total - (accountedByModel.get(modelKey) || 0));
+      if (residual > 0) {
+        const providers = [...(providerKeysByModel.get(modelKey) || [])];
+        if (providers.length === 1) {
+          const provider = providers[0];
+          const key = `provider:${provider}/${modelKey}`;
+          const existing = providerRowsByKey.get(key);
+          if (existing) {
+            existing.value += residual;
+            continue;
+          }
+        }
+        const label = legacyLabels.get(modelKey) || modelKey;
+        rows.push({ key: label, name: label, value: residual });
+      }
+    }
+    const accounted = rows.reduce((sum, row) => sum + row.value, 0);
+    const unclassified = Math.max(0, clientValue - accounted);
+    if (unclassified > 0) rows.push({ key: `${UNATTRIBUTED_KEY}:${client}`, name: unclassifiedLabel || 'Unclassified', value: unclassified });
+    return rows.sort((a, b) => b.value - a.value || a.name.localeCompare(b.name));
   }
 
   function deviceBreakdownForPeriod(device, periodName, options = {}) {
@@ -21,13 +130,9 @@
     const unattributedTokens = Math.max(0, totalTokens - attributedTokens);
     if (unattributedTokens > 0) clientEntries.push([UNATTRIBUTED_KEY, unattributedTokens]);
     const tools = clientEntries.map(([client, value]) => {
-      const models = positiveEntries(period.clientModels?.[client]).map(([model, modelValue]) => {
-        return {
-          key: model,
-          name: model,
-          value: modelValue
-        };
-      }).sort((a, b) => b.value - a.value || a.name.localeCompare(b.name));
+      const models = client === UNATTRIBUTED_KEY
+        ? []
+        : modelsForClient(period, client, value, options.unattributedLabel);
 
       return {
         key: client,
