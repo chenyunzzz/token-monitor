@@ -59,6 +59,32 @@ test('WSL scans exclude locally parsed Proma while retaining it for marker detec
   assert.equal(wslOptions.now.toISOString(), collectedAt);
 });
 
+test('separate Windows producer keeps WSL out of the widget scan', async () => {
+  let wslCalls = 0;
+  const summary = await collectUsageOnce({
+    platform: 'win32',
+    clients: 'codex,antigravity,dsh,omp,pi',
+    allTimeSince: '2025-01-01',
+    commandTimeoutMs: 1000,
+    deviceId: 'windows',
+    limitsEnabled: false,
+    separateWslDevice: true,
+    wslFallbackScanEnabled: false,
+    runTokscale: async ({ clients }) => ({
+      entries: [{ client: clients, sessionId: 'win', model: 'gpt-6', input: 10, output: 2, cost: 0 }]
+    }),
+    collectWslUsage: async () => {
+      wslCalls += 1;
+      return { bundle: bundleWith(999), detected: ['antigravity'] };
+    }
+  });
+  assert.equal(wslCalls, 0);
+  assert.deepEqual(summary.trackedClients, ['codex']);
+  assert.deepEqual(summary.today.clients, { codex: 12 });
+  assert.equal(summary.wslStatus.state, 'disabled');
+  assert.equal(summary.replaceUntrackedClients, true);
+});
+
 test('watch tick reuses wslAnchor and does not rescan WSL', async () => {
   let wslCalls = 0;
   const anchor = { dateKey: localTodayKey(), today: emptyPeriod(), month: emptyPeriod(), allTime: emptyPeriod() };

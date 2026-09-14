@@ -522,7 +522,10 @@ function defaultSettings() {
     discordRpcEnabled: false,
     deviceId: process.env.TOKEN_MONITOR_DEVICE_ID || defaultDeviceId(),
     lastPostedDeviceId: '',
-    clients: clientsCsvForSetting(process.env.TOKEN_MONITOR_CLIENTS),
+    clients: clientsCsvForSetting(
+      process.env.TOKEN_MONITOR_CLIENTS
+        ?? (process.platform === 'win32' ? 'codex' : undefined)
+    ),
     customScanPaths: {},
     clientDisplayOrder: '',
     hiddenClients: '',
@@ -726,6 +729,17 @@ function electronUsageConfig(errorPrefix) {
     watchTriggersCollection: collectorWatchTriggersCollection(),
     intervalRequiresActivity: collectorIntervalRequiresActivity(),
     watchDebounceMs: 1500,
+    // The Windows widget owns native Codex. WSL is reported by the Linux
+    // headless agent as its own device, so the widget must not scan the same
+    // WSL files and merge them into Windows.
+    ...(process.platform === 'win32'
+      ? {
+          clientsOverride: 'codex',
+          wslScanEnabledOverride: false,
+          separateWslDevice: true,
+          wslFallbackScanEnabled: false
+        }
+      : {}),
     dailyHistoryArchiveWriteEnabled: () => !isExternalAgentActive(),
     onError: (error, reason) => console.log(`[${errorPrefix}] ${reason}: ${error.message}`),
     logger: (message) => console.log(`[${errorPrefix}] ${message}`)

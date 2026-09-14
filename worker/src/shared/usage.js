@@ -914,6 +914,22 @@ function normalizeDeviceOsName(value) {
   return String(value || '').trim().slice(0, 64);
 }
 
+function normalizeSourcePeriods(value, projectsEnabled = true) {
+  if (!value || typeof value !== 'object') return null;
+  const normalized = {};
+  for (const [source, periods] of Object.entries(value)) {
+    if (!periods || typeof periods !== 'object') continue;
+    const sourcePeriods = {};
+    for (const periodName of PERIODS) {
+      if (periods[periodName] && typeof periods[periodName] === 'object') {
+        sourcePeriods[periodName] = normalizePeriod(periods[periodName], { projectsEnabled });
+      }
+    }
+    if (Object.keys(sourcePeriods).length > 0) normalized[String(source).slice(0, 32)] = sourcePeriods;
+  }
+  return Object.keys(normalized).length > 0 ? normalized : null;
+}
+
 function normalizeDeviceRecord(record) {
   const nowIso = new Date().toISOString();
   const normalized = {
@@ -939,6 +955,10 @@ function normalizeDeviceRecord(record) {
     if (health) normalized.clientHealth = health;
   }
   if (hasOwn(record, 'wslStatus')) normalized.wslStatus = normalizeWslStatus(record.wslStatus);
+  if (hasOwn(record, 'sourcePeriods')) {
+    const sourcePeriods = normalizeSourcePeriods(record.sourcePeriods, normalized.projectsEnabled !== false);
+    if (sourcePeriods) normalized.sourcePeriods = sourcePeriods;
+  }
   if (hasOwn(record, 'projectsEnabled')) normalized.projectsEnabled = record.projectsEnabled !== false;
   if (hasOwn(record, 'allTimeProjectsOmitted')) normalized.allTimeProjectsOmitted = record.allTimeProjectsOmitted === true;
   if (hasOwn(record, 'allTimeProjectsIncomplete')) normalized.allTimeProjectsIncomplete = record.allTimeProjectsIncomplete === true;
@@ -1177,7 +1197,7 @@ function mergeDeviceRecord(existing, incoming) {
   if (!hasIncomingLimits) normalizedIncoming.limits = normalizedExisting.limits;
   else normalizedIncoming.limits = mergeDeviceLimits(normalizedExisting, normalizedIncoming);
   if (!hasIncomingHistory && hasOwn(normalizedExisting, 'history')) normalizedIncoming.history = normalizedExisting.history;
-  if (hasIncomingTrackedClients) {
+  if (hasIncomingTrackedClients && incoming?.replaceUntrackedClients !== true) {
     preserveUntrackedClientUsage(normalizedExisting, normalizedIncoming, normalizedIncoming.trackedClients || []);
   }
   return normalizedIncoming;
@@ -1381,14 +1401,82 @@ function isPeriodExpired(record, periodName, nowMs) {
   return false;
 }
 
+function subtractUsageValue(base, deduction) {
+  if (typeof base === 'number') return Math.max(0, base - asNumber(deduction));
+  if (Array.isArray(base)) return base.slice();
+  if (base && typeof base === 'object') {
+    const result = {};
+    for (const [key, value] of Object.entries(base)) {
+      result[key] = subtractUsageValue(value, deduction?.[key]);
+    }
+    return result;
+  }
+  return base;
+}
+
+function subtractUsagePeriod(base, deduction) {
+  const result = normalizePeriod(base);
+  const source = normalizePeriod(deduction);
+  for (const key of Object.keys(result)) {
+    if (key === 'capabilities') continue;
+    result[key] = subtractUsageValue(result[key], source[key]);
+  }
+  return result;
+}
+
+function hasWslHeadlessPeer(record, records) {
+  if (!/^win32(?:-|$)/i.test(record.platform) || !record.sourcePeriods?.wsl) return false;
+  const hostname = String(record.hostname || '').trim().toLowerCase();
+  if (!hostname) return false;
+  return records.some((peer) => (
+    peer !== record
+    && /^linux(?:-|$)/i.test(peer.platform)
+    && peer.agentRuntime === 'headless-agent'
+    && String(peer.hostname || '').trim().toLowerCase() === hostname
+  ));
+}
+
+function deduplicateWslHeadlessPeer(record, records, nowMs = Date.now()) {
+  if (!hasWslHeadlessPeer(record, records)) return record;
+  const peer = records.find((candidate) => (
+    candidate !== record
+    && /^linux(?:-|$)/i.test(candidate.platform)
+    && candidate.agentRuntime === 'headless-agent'
+    && String(candidate.hostname || '').trim().toLowerCase() === String(record.hostname || '').trim().toLowerCase()
+  ));
+  const peerPeriods = peer?.periods || {};
+  const periods = {};
+  for (const periodName of PERIODS) {
+    const peerPeriod = isPeriodExpired(peer, periodName, nowMs) ? null : peerPeriods[periodName];
+    const native = subtractUsagePeriod(record.periods[periodName], record.sourcePeriods.wsl[periodName]);
+    const remainingWsl = subtractUsagePeriod(record.sourcePeriods.wsl[periodName], peerPeriod);
+    periods[periodName] = mergePeriods(native, remainingWsl);
+  }
+  const remainingSources = { ...record.sourcePeriods };
+  const remainingWsl = {};
+  for (const periodName of PERIODS) {
+    const peerPeriod = isPeriodExpired(peer, periodName, nowMs) ? null : peerPeriods[periodName];
+    const residual = subtractUsagePeriod(record.sourcePeriods.wsl[periodName], peerPeriod);
+    if (residual.totalTokens > 0 || residual.costUsd > 0) remainingWsl[periodName] = residual;
+  }
+  if (Object.keys(remainingWsl).length > 0) remainingSources.wsl = remainingWsl;
+  else delete remainingSources.wsl;
+  return {
+    ...record,
+    periods,
+    ...(Object.keys(remainingSources).length > 0 ? { sourcePeriods: remainingSources } : { sourcePeriods: undefined })
+  };
+}
+
 function aggregateDevices(devices, staleAfterMs, nowMs = Date.now()) {
   const aggregate = { updatedAt: new Date().toISOString(), periods: {}, devices: [], projectsIncomplete: false };
   const sessionDetailsOmitted = {};
   const periodProjectsOmitted = {};
   for (const periodName of PERIODS) aggregate.periods[periodName] = emptyPeriod();
   const now = nowMs;
-  for (const record of devices) {
-    const normalized = normalizeDeviceRecord(record);
+  const normalizedRecords = devices.map((record) => normalizeDeviceRecord(record));
+  for (const record of normalizedRecords) {
+    const normalized = deduplicateWslHeadlessPeer(record, normalizedRecords, now);
     const ageMs = now - Date.parse(normalized.receivedAt || normalized.updatedAt || 0);
     const deviceStaleAfterMs = staleAfterMsForSyncUpload(normalized.syncUploadIntervalMs, staleAfterMs);
     const stale = Number.isFinite(ageMs) && deviceStaleAfterMs > 0 ? ageMs > deviceStaleAfterMs : false;
@@ -1412,6 +1500,7 @@ function aggregateDevices(devices, staleAfterMs, nowMs = Date.now()) {
       // diagnostics on the unauthenticated surface.
       ...(hasOwn(normalized, 'clientHealth') ? { clientHealth: normalized.clientHealth } : {}),
       ...(hasOwn(normalized, 'wslStatus') ? { wslStatus: normalized.wslStatus } : {}),
+      ...(hasOwn(normalized, 'sourcePeriods') && normalized.sourcePeriods ? { sourcePeriods: normalized.sourcePeriods } : {}),
       ...(hasOwn(normalized, 'projectsEnabled') ? { projectsEnabled: normalized.projectsEnabled } : {}),
       ...(hasOwn(normalized, 'allTimeProjectsOmitted') ? { allTimeProjectsOmitted: normalized.allTimeProjectsOmitted } : {}),
       ...(hasOwn(normalized, 'allTimeProjectsIncomplete') ? { allTimeProjectsIncomplete: normalized.allTimeProjectsIncomplete } : {}),

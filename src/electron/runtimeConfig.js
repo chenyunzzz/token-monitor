@@ -58,7 +58,9 @@ const USAGE_CONFIG_FINGERPRINT_KEYS = Object.freeze([
   'watchTriggersCollection',
   'intervalRequiresActivity',
   'watchDebounceMs',
-  'wslScanEnabled'
+  'wslScanEnabled',
+  'separateWslDevice',
+  'wslFallbackScanEnabled'
 ]);
 const LIMITS_RECONFIGURE_KEYS = Object.freeze([
   'limitsEnabled',
@@ -122,7 +124,7 @@ function normalizeAllTimeSince(value, fallback = DEFAULT_ALL_TIME_SINCE) {
 
 function usageConfigFromSettings(settings = {}, context = {}) {
   return {
-    clients: clientsCsvForSetting(settings.clients),
+    clients: clientsCsvForSetting(context.clientsOverride ?? settings.clients),
     customScanPaths: normalizeCustomScanPaths(settings.customScanPaths),
     allTimeSince: normalizeAllTimeSince(settings.allTimeSince),
     commandTimeoutMs: Number(context.commandTimeoutMs || 120 * 1000),
@@ -144,7 +146,12 @@ function usageConfigFromSettings(settings = {}, context = {}) {
     watchTriggersCollection: context.watchTriggersCollection !== false,
     intervalRequiresActivity: Boolean(context.intervalRequiresActivity),
     watchDebounceMs: Number(context.watchDebounceMs || 1500),
-    wslScanEnabled: settings.wslScanEnabled !== false,
+    wslScanEnabled: context.wslScanEnabledOverride ?? (settings.wslScanEnabled !== false),
+    // On Windows the WSL headless agent is the authoritative WSL producer.
+    // Keep the widget's native producer separate so WSL clients cannot leak
+    // back into the Windows device or get counted twice by the hub.
+    separateWslDevice: context.separateWslDevice === true,
+    wslFallbackScanEnabled: context.wslFallbackScanEnabled === true,
     onError: context.onError,
     logger: context.logger
   };

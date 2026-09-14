@@ -1044,7 +1044,9 @@ async function collectUsageOnce(options) {
   const osInfo = options.osInfo === undefined
     ? hostOsInfo()
     : normalizeOsInfo(options.osInfo);
-  const normalizedClients = normalizeClientsCsv(clients);
+  const configuredClients = normalizeClientsCsv(clients);
+  const separateWslDevice = platformValue === 'win32' && options.separateWslDevice === true;
+  const normalizedClients = separateWslDevice ? 'codex' : configuredClients;
   const localSessionMetadataDeps = {
     ...(options.sessionMetadataDeps || {}),
     metadataCache: new Map(),
@@ -1067,6 +1069,11 @@ async function collectUsageOnce(options) {
   // usage is supplied by the same Tokscale path as every other tracked client.
   const localClients = new Set(PARSE_LOCAL_CLIENTS);
   const tokscaleClients = normalizedClients ? normalizedClients.split(',').filter((c) => !localClients.has(c)).join(',') : normalizedClients;
+  // WSL scans use the same Tokscale-backed client set as the native scan;
+  // locally parsed adapters (Proma/Qoder CN) have their own isolated paths.
+  const wslClients = separateWslDevice
+    ? configuredClients.split(',').filter((client) => !localClients.has(client)).join(',')
+    : tokscaleClients;
   const includesProma = normalizedClients.split(',').includes('proma');
   const includesQoderCn = normalizedClients.split(',').includes('qodercn');
   const trackedClientSet = new Set(normalizedClients.split(',').filter(Boolean));
@@ -1308,11 +1315,15 @@ async function collectUsageOnce(options) {
   const windowsPeriods = { today, month, allTime };
   let wslBundle = emptyWslBundle();
   let wslDetected = [];
-  if (normalizedClients && options.wslScanEnabled !== false) {
+  if (
+    normalizedClients
+    && options.wslScanEnabled !== false
+    && (!separateWslDevice || options.wslFallbackScanEnabled === true)
+  ) {
     if (options.refreshWsl) {
       const wslResult = await collectWsl({
-        clients: tokscaleClients,
-        trackedClients: normalizedClients,
+        clients: wslClients,
+        trackedClients: configuredClients,
         allTimeSince,
         now: collectedAt,
         commandTimeoutMs,
@@ -1332,8 +1343,8 @@ async function collectUsageOnce(options) {
       wslBundle = options.wslAnchor;
     } else if (!anchorUsed) {
       const wslResult = await collectWsl({
-        clients: tokscaleClients,
-        trackedClients: normalizedClients,
+        clients: wslClients,
+        trackedClients: configuredClients,
         allTimeSince,
         now: collectedAt,
         commandTimeoutMs,
@@ -1389,7 +1400,7 @@ async function collectUsageOnce(options) {
   let wslStatus = null;
   if (platformValue === 'win32' && normalizedClients) {
     const reuseFrozen = !options.refreshWsl && options.wslAnchor && options.wslStatus;
-    if (options.wslScanEnabled === false) {
+    if (options.wslScanEnabled === false || (separateWslDevice && options.wslFallbackScanEnabled !== true)) {
       wslStatus = { state: 'disabled', detected: [], withData: [] };
     } else if (reuseFrozen) {
       wslStatus = options.wslStatus;
@@ -1428,6 +1439,12 @@ async function collectUsageOnce(options) {
     ...(agentRuntime ? { agentRuntime } : {}),
     projectsEnabled,
     trackedClients: normalizedClients ? normalizedClients.split(',') : [],
+    // This is a complete Windows-native snapshot. Do not resurrect clients
+    // from an older pre-split snapshot when it reaches the hub.
+    ...(separateWslDevice ? { replaceUntrackedClients: true } : {}),
+    ...(separateWslDevice && wslBundle?.allTime?.totalTokens > 0
+      ? { sourcePeriods: { wsl: wslBundle } }
+      : {}),
     clientStatus: deriveClientStatus(normalizedClients, allTime, { sourceChecks }),
     wslStatus,
     periodWindows: computePeriodWindows(collectedAt),

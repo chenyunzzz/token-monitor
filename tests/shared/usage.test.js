@@ -555,6 +555,25 @@ test('mergeDeviceRecord preserves usage for clients omitted by the active tracke
   });
 });
 
+test('mergeDeviceRecord can replace stale untracked clients for a split Windows producer', () => {
+  const existing = {
+    deviceId: 'windows',
+    platform: 'win32-x64',
+    trackedClients: ['codex', 'antigravity'],
+    periods: { today: { totalTokens: 30, clients: { codex: 10, antigravity: 20 } } }
+  };
+  const incoming = {
+    deviceId: 'windows',
+    platform: 'win32-x64',
+    trackedClients: ['codex'],
+    replaceUntrackedClients: true,
+    periods: { today: { totalTokens: 12, clients: { codex: 12 } } }
+  };
+  const merged = mergeDeviceRecord(existing, incoming);
+  assert.deepEqual(merged.periods.today.clients, { codex: 12 });
+  assert.equal(merged.periods.today.totalTokens, 12);
+});
+
 test('mergeDeviceRecord marks unrecoverable all-time project attribution incomplete', () => {
   const existing = {
     deviceId: 'macbook',
