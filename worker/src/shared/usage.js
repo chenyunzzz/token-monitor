@@ -50,7 +50,7 @@ const SESSION_TEXT_KEYS = [
   'name', 'preview', 'firstUserMessage', 'first_user_message',
   'customTitle', 'custom_title', 'aiTitle', 'ai_title'
 ];
-const GUI_SECRET_LIMIT_PROVIDERS = new Set(['copilot', 'deepseek', 'minimax']);
+const GUI_SECRET_LIMIT_PROVIDERS = new Set(['copilot', 'deepseek', 'factory', 'minimax']);
 // These namespaces are routing prefixes used by OpenCode-compatible clients.
 // A qualified model id is the only provider evidence available in some
 // transcript formats; keep the allowlist narrow so arbitrary model names do
@@ -255,6 +255,7 @@ function normalizeClientName(value) {
   if (raw.includes('gemini')) return 'gemini';
   if (raw.includes('cursor')) return 'cursor';
   if (raw.includes('antigravity')) return 'antigravity';
+  if (raw === 'amp') return 'amp';
   if (raw.includes('kimi')) return 'kimi';
   if (raw.includes('qwen')) return 'qwen';
   if (raw.includes('grok')) return 'grok';
