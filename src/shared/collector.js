@@ -1046,7 +1046,11 @@ async function collectUsageOnce(options) {
     : normalizeOsInfo(options.osInfo);
   const configuredClients = normalizeClientsCsv(clients);
   const separateWslDevice = platformValue === 'win32' && options.separateWslDevice === true;
-  const normalizedClients = separateWslDevice ? 'codex' : configuredClients;
+  // `separateWslDevice` controls where the WSL bundle is published; it must
+  // not narrow the native client selection. The widget can own Codex plus any
+  // native clients enabled in Settings (for example Cline), while the WSL
+  // headless agent remains a separate device and is never merged here.
+  const normalizedClients = configuredClients;
   const localSessionMetadataDeps = {
     ...(options.sessionMetadataDeps || {}),
     metadataCache: new Map(),

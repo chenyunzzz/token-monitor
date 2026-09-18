@@ -729,12 +729,14 @@ function electronUsageConfig(errorPrefix) {
     watchTriggersCollection: collectorWatchTriggersCollection(),
     intervalRequiresActivity: collectorIntervalRequiresActivity(),
     watchDebounceMs: 1500,
-    // The Windows widget owns native Codex. WSL is reported by the Linux
-    // headless agent as its own device, so the widget must not scan the same
-    // WSL files and merge them into Windows.
+    // The Windows widget owns the native clients selected in Settings. WSL is
+    // reported by the Linux headless agent as its own device, so the widget
+    // must not scan the same WSL files and merge them into Windows. Keeping the
+    // client selection here (rather than forcing `codex`) lets a newly installed
+    // native client such as Cline be enabled without ever pulling WSL usage into
+    // the Windows device.
     ...(process.platform === 'win32'
       ? {
-          clientsOverride: 'codex',
           wslScanEnabledOverride: false,
           separateWslDevice: true,
           wslFallbackScanEnabled: false

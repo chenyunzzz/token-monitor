@@ -59,8 +59,9 @@ test('WSL scans exclude locally parsed Proma while retaining it for marker detec
   assert.equal(wslOptions.now.toISOString(), collectedAt);
 });
 
-test('separate Windows producer keeps WSL out of the widget scan', async () => {
+test('separate Windows producer keeps WSL out of the widget scan without narrowing native clients', async () => {
   let wslCalls = 0;
+  let scannedClients = null;
   const summary = await collectUsageOnce({
     platform: 'win32',
     clients: 'codex,antigravity,dsh,omp,pi',
@@ -70,16 +71,18 @@ test('separate Windows producer keeps WSL out of the widget scan', async () => {
     limitsEnabled: false,
     separateWslDevice: true,
     wslFallbackScanEnabled: false,
-    runTokscale: async ({ clients }) => ({
-      entries: [{ client: clients, sessionId: 'win', model: 'gpt-6', input: 10, output: 2, cost: 0 }]
-    }),
+    runTokscale: async ({ clients }) => {
+      scannedClients = clients;
+      return { entries: [{ client: 'codex', sessionId: 'win', model: 'gpt-6', input: 10, output: 2, cost: 0 }] };
+    },
     collectWslUsage: async () => {
       wslCalls += 1;
       return { bundle: bundleWith(999), detected: ['antigravity'] };
     }
   });
   assert.equal(wslCalls, 0);
-  assert.deepEqual(summary.trackedClients, ['codex']);
+  assert.equal(scannedClients, 'codex,antigravity,dsh,omp,pi');
+  assert.deepEqual(summary.trackedClients, ['codex', 'antigravity', 'dsh', 'omp', 'pi']);
   assert.deepEqual(summary.today.clients, { codex: 12 });
   assert.equal(summary.wslStatus.state, 'disabled');
   assert.equal(summary.replaceUntrackedClients, true);
