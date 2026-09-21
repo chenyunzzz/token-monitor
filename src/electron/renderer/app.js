@@ -885,6 +885,7 @@ let liveTokenRateAnimationTimer = null;
 let liveTokenRateRenderedRevision = 0;
 let liveModelTokenRateContext = '';
 let liveModelTokenRateExpiryTimer = null;
+const liveModelTokenRateAverages = new Map();
 
 function liveTokenRateSourceKey(periodSource) {
   return [
@@ -1142,6 +1143,27 @@ function observeLiveModelTokenRates(stats) {
     }
   }
   const modelEntries = [...grouped.values()];
+  liveModelTokenRateAverages.clear();
+  for (const entry of modelEntries) {
+    for (const [provider, models] of Object.entries(entry.period.providerModelTimedOutputTokens || {})) {
+      for (const [model, timedOutputTokens] of Object.entries(models || {})) {
+        const timedDurationMs = entry.period.providerModelTimedDurationMs?.[provider]?.[model] || 0;
+        const speed = tokenRateApi.tokenRatePerSecond({ timedOutputTokens, timedDurationMs });
+        if (speed > 0) liveModelTokenRateAverages.set(
+          `${entry.id}\u0000provider:${provider}/${model}`,
+          { speed, average: true }
+        );
+      }
+    }
+    for (const [model, timedOutputTokens] of Object.entries(entry.period.modelTimedOutputTokens || {})) {
+      const timedDurationMs = entry.period.modelTimedDurationMs?.[model] || 0;
+      const speed = tokenRateApi.tokenRatePerSecond({ timedOutputTokens, timedDurationMs });
+      if (speed > 0) liveModelTokenRateAverages.set(
+        `${entry.id}\u0000model:${model}`,
+        { speed, average: true }
+      );
+    }
+  }
   const context = [
     state.mode,
     state.settings?.hubMode || '',
@@ -1194,7 +1216,11 @@ function modelTimingCounters(period, client, modelKey) {
 }
 
 function liveModelTokenRateForEntry(entryId, key) {
-  return liveModelTokenRateTracker.getSampleFor(String(entryId || ''), String(key || ''));
+  const id = String(entryId || '');
+  const modelKey = String(key || '');
+  return liveModelTokenRateTracker.getSampleFor(id, modelKey)
+    || liveModelTokenRateAverages.get(`${id}\u0000${modelKey}`)
+    || null;
 }
 
 function formatLiveTokenRate(value) {
