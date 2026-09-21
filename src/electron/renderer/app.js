@@ -7259,6 +7259,11 @@ async function refreshStats(options = {}) {
     observeLiveTokenRate(nextStats);
     state.stats = nextStats;
     observeDisplayLiveTokenRates(nextStats);
+    // The initial/manual stats path does not necessarily receive a subsequent
+    // SSE push. Seed the per-model tracker here as well, otherwise model rows
+    // stay at the placeholder even when the snapshot already contains timing
+    // counters (and therefore has a valid cumulative TPS fallback).
+    observeLiveModelTokenRates(nextStats);
     if (options.forceHistory === true) {
       // A manual history rescan is an explicit retry boundary. Let Home request the
       // corresponding full payload even when its revision is unchanged, and restore
