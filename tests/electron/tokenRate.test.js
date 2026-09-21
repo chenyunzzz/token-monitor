@@ -418,6 +418,7 @@ test('model live rate keeps provider routes and environments independent', () =>
   assert.equal(tracker.getSampleFor('Windows\u0000codex', 'provider:ollama/deepseek-v4-flash').speed, 50);
   assert.equal(tracker.getSampleFor('WSL\u0000dsh', 'provider:ollama/deepseek-v4-flash').speed, 50);
   assert.equal(tracker.getSample('provider:ollama/deepseek-v4-flash').speed, 100);
+  assert.equal(tracker.getAverageFor('Windows\u0000codex', 'provider:ollama/deepseek-v4-flash').speed, 50);
 });
 
 test('holding the title mark accelerates from the real rate and keeps rising', () => {

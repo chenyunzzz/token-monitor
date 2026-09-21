@@ -82,10 +82,12 @@
     if (typeof now !== 'function') throw new TypeError('now must be a function');
     let baseline = null;
     let sample = null;
+    let latest = null;
     let revision = 0;
 
     function reset(period) {
       baseline = period ? usageCounters(period) : null;
+      latest = baseline;
       sample = null;
     }
 
@@ -93,9 +95,11 @@
       const current = usageCounters(period);
       if (!current) {
         baseline = null;
+        latest = null;
         sample = null;
         return null;
       }
+      latest = current;
       if (!baseline) {
         baseline = current;
         return null;
@@ -134,7 +138,13 @@
       return mode === 'burn' ? sample.burn : sample.speed;
     }
 
-    return { getSample, observe, reset, value };
+    function average() {
+      if (!latest) return null;
+      const speed = tokenRatePerSecond(latest);
+      return speed > 0 ? { speed, average: true } : null;
+    }
+
+    return { average, getSample, observe, reset, value };
   }
 
   // Hub devices publish independently. Taking one delta from the aggregate would make the
@@ -386,6 +396,12 @@
       return sample && timestamp < sample.sampledAt + lifetime ? { ...sample, idle: false } : null;
     }
 
+    function getAverageFor(id, key) {
+      return devices.get(String(id || ''))
+        ?.get(`${String(id || '')}\u0000${String(key || '')}`)
+        ?.average() || null;
+    }
+
     function getSample(key) {
       const samples = [];
       for (const deviceId of devices.keys()) {
@@ -413,7 +429,7 @@
       return Number.isFinite(next) ? next : null;
     }
 
-    return { getSample, getSampleFor, nextExpiryAt, observe, reset };
+    return { getAverageFor, getSample, getSampleFor, nextExpiryAt, observe, reset };
   }
 
   function selectLiveTokenRatePeriods(stats, deviceId, hubMode = 'local', scope = 'all') {

@@ -3318,10 +3318,17 @@ function renderModelTree(period) {
     const share = document.createElement('span');
     share.textContent = formatPercent(total > 0 ? node.value / total * 100 : 0);
     if (node.level === 4 && node.rateKey) {
-      const rate = liveModelTokenRateForEntry(node.rateEntryId, node.rateKey);
+      const rate = liveModelTokenRateForEntry(node.rateEntryId, node.rateKey)
+        || liveModelTokenRateTracker.getAverageFor(node.rateEntryId, node.rateKey);
       const throughput = document.createElement('span');
       throughput.className = 'model-tree-tps';
-      throughput.textContent = rate ? `${formatLiveTokenRate(rate.speed)} tok/s` : '— tok/s';
+      throughput.classList.toggle('is-average', Boolean(rate?.average));
+      throughput.textContent = rate
+        ? `${rate.average ? '≈ ' : ''}${formatLiveTokenRate(rate.speed)} tok/s`
+        : '— tok/s';
+      throughput.title = rate?.average
+        ? 'Based on recorded model performance; a fresh scan will replace it with live TPS.'
+        : 'Waiting for verified model performance data.';
       metrics.append(value, throughput, share);
     } else {
       metrics.append(value, share);
