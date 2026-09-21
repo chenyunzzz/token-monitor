@@ -224,20 +224,32 @@ function emptyPeriod() {
     modelCacheWrites: {},
     modelOutputs: {},
     modelUnclassifiedTokens: {},
+    modelTimedTokens: {},
+    modelTimedOutputTokens: {},
+    modelTimedDurationMs: {},
     clientModels: {},
     clientModelCosts: {},
+    clientModelTimedTokens: {},
+    clientModelTimedOutputTokens: {},
+    clientModelTimedDurationMs: {},
     clientProviderModels: {},
     clientProviderModelCosts: {},
     clientProviderModelCacheReads: {},
     clientProviderModelCacheWrites: {},
     clientProviderModelOutputs: {},
     clientProviderModelUnclassifiedTokens: {},
+    clientProviderModelTimedTokens: {},
+    clientProviderModelTimedOutputTokens: {},
+    clientProviderModelTimedDurationMs: {},
     providerModels: {},
     providerModelCosts: {},
     providerModelCacheReads: {},
     providerModelCacheWrites: {},
     providerModelOutputs: {},
     providerModelUnclassifiedTokens: {},
+    providerModelTimedTokens: {},
+    providerModelTimedOutputTokens: {},
+    providerModelTimedDurationMs: {},
     projects: Object.create(null),
     sessions: {}
   };
@@ -922,6 +934,13 @@ function normalizePeriod(input, options = {}) {
       if (key) period.modelCosts[key] = (period.modelCosts[key] || 0) + asNumber(value);
     }
   }
+  for (const field of ['modelTimedTokens', 'modelTimedOutputTokens', 'modelTimedDurationMs']) {
+    if (!input[field] || typeof input[field] !== 'object') continue;
+    for (const [model, value] of Object.entries(input[field])) {
+      const key = normalizeModelName(model);
+      if (key) period[field][key] = (period[field][key] || 0) + Math.max(0, Math.round(asNumber(value)));
+    }
+  }
   if (input.clientModels && typeof input.clientModels === 'object') {
     for (const [client, models] of Object.entries(input.clientModels)) {
       const clientKey = normalizeClientName(client);
@@ -946,13 +965,30 @@ function normalizePeriod(input, options = {}) {
       }
     }
   }
+  for (const field of ['clientModelTimedTokens', 'clientModelTimedOutputTokens', 'clientModelTimedDurationMs']) {
+    if (!input[field] || typeof input[field] !== 'object') continue;
+    for (const [client, models] of Object.entries(input[field])) {
+      const clientKey = normalizeClientName(client);
+      if (!clientKey || !models || typeof models !== 'object') continue;
+      for (const [model, value] of Object.entries(models)) {
+        const modelKey = normalizeModelNameForClient(model, clientKey);
+        if (!modelKey) continue;
+        if (!period[field][clientKey]) period[field][clientKey] = {};
+        period[field][clientKey][modelKey] = (period[field][clientKey][modelKey] || 0)
+          + Math.max(0, Math.round(asNumber(value)));
+      }
+    }
+  }
   for (const [field, cost] of [
     ['clientProviderModels', false],
     ['clientProviderModelCosts', true],
     ['clientProviderModelCacheReads', false],
     ['clientProviderModelCacheWrites', false],
     ['clientProviderModelOutputs', false],
-    ['clientProviderModelUnclassifiedTokens', false]
+    ['clientProviderModelUnclassifiedTokens', false],
+    ['clientProviderModelTimedTokens', false],
+    ['clientProviderModelTimedOutputTokens', false],
+    ['clientProviderModelTimedDurationMs', false]
   ]) {
     if (!input[field] || typeof input[field] !== 'object') continue;
     for (const [client, providers] of Object.entries(input[field])) {
@@ -978,7 +1014,10 @@ function normalizePeriod(input, options = {}) {
     ['providerModelCacheReads', false],
     ['providerModelCacheWrites', false],
     ['providerModelOutputs', false],
-    ['providerModelUnclassifiedTokens', false]
+    ['providerModelUnclassifiedTokens', false],
+    ['providerModelTimedTokens', false],
+    ['providerModelTimedOutputTokens', false],
+    ['providerModelTimedDurationMs', false]
   ]) {
     if (!input[field] || typeof input[field] !== 'object') continue;
     for (const [provider, models] of Object.entries(input[field])) {
@@ -1063,9 +1102,22 @@ function addUsageRowToPeriod(period, row, detectedClient = detectClient(row), pr
     if (output > 0) period.modelOutputs[model] = (period.modelOutputs[model] || 0) + output;
   }
   if (model && cost > 0) period.modelCosts[model] = (period.modelCosts[model] || 0) + cost;
+  if (model && tokens > 0) {
+    period.modelTimedTokens[model] = (period.modelTimedTokens[model] || 0) + timedTokens;
+    period.modelTimedOutputTokens[model] = (period.modelTimedOutputTokens[model] || 0) + timedOutputTokens;
+    period.modelTimedDurationMs[model] = (period.modelTimedDurationMs[model] || 0) + timedDurationMs;
+  }
   if (client && model && tokens > 0) {
     if (!period.clientModels[client]) period.clientModels[client] = {};
     period.clientModels[client][model] = (period.clientModels[client][model] || 0) + Math.round(tokens);
+    for (const [field, value] of [
+      ['clientModelTimedTokens', timedTokens],
+      ['clientModelTimedOutputTokens', timedOutputTokens],
+      ['clientModelTimedDurationMs', timedDurationMs]
+    ]) {
+      if (!period[field][client]) period[field][client] = {};
+      period[field][client][model] = (period[field][client][model] || 0) + value;
+    }
   }
   if (client && model && cost > 0) {
     if (!period.clientModelCosts[client]) period.clientModelCosts[client] = {};
@@ -1077,7 +1129,10 @@ function addUsageRowToPeriod(period, row, detectedClient = detectClient(row), pr
     for (const [field, value] of [
       ['providerModelCacheReads', cacheRead],
       ['providerModelCacheWrites', cacheWrite],
-      ['providerModelOutputs', output]
+      ['providerModelOutputs', output],
+      ['providerModelTimedTokens', timedTokens],
+      ['providerModelTimedOutputTokens', timedOutputTokens],
+      ['providerModelTimedDurationMs', timedDurationMs]
     ]) {
       if (value <= 0) continue;
       if (!period[field][providerKey]) period[field][providerKey] = {};
@@ -1090,7 +1145,10 @@ function addUsageRowToPeriod(period, row, detectedClient = detectClient(row), pr
       for (const [field, value] of [
         ['clientProviderModelCacheReads', cacheRead],
         ['clientProviderModelCacheWrites', cacheWrite],
-        ['clientProviderModelOutputs', output]
+        ['clientProviderModelOutputs', output],
+        ['clientProviderModelTimedTokens', timedTokens],
+        ['clientProviderModelTimedOutputTokens', timedOutputTokens],
+        ['clientProviderModelTimedDurationMs', timedDurationMs]
       ]) {
         if (value <= 0) continue;
         if (!period[field][client]) period[field][client] = {};
@@ -1279,6 +1337,10 @@ function addClientModelUsage(target, source, client) {
       if (cacheWrite > 0) target.modelCacheWrites[model] = (target.modelCacheWrites[model] || 0) + cacheWrite;
       if (output > 0) target.modelOutputs[model] = (target.modelOutputs[model] || 0) + output;
       if (unclassified > 0) target.modelUnclassifiedTokens[model] = (target.modelUnclassifiedTokens[model] || 0) + unclassified;
+      for (const field of ['modelTimedTokens', 'modelTimedOutputTokens', 'modelTimedDurationMs']) {
+        const value = Math.max(0, asNumber(source[field]?.[model]));
+        if (value > 0) target[field][model] = (target[field][model] || 0) + value;
+      }
       if (unclassified > 0) target.capabilities.tokenComponents = false;
     } else if (tokens > 0) {
       target.modelUnclassifiedTokens[model] = (target.modelUnclassifiedTokens[model] || 0) + tokens;
@@ -1290,6 +1352,14 @@ function addClientModelUsage(target, source, client) {
     if (!target.clientModelCosts[client]) target.clientModelCosts[client] = {};
     target.clientModelCosts[client][model] = (target.clientModelCosts[client][model] || 0) + cost;
   }
+  for (const field of ['clientModelTimedTokens', 'clientModelTimedOutputTokens', 'clientModelTimedDurationMs']) {
+    const modelsForClient = source[field]?.[client];
+    if (!modelsForClient || typeof modelsForClient !== 'object') continue;
+    if (!target[field][client]) target[field][client] = {};
+    for (const [model, value] of Object.entries(modelsForClient)) {
+      target[field][client][model] = (target[field][client][model] || 0) + Math.max(0, asNumber(value));
+    }
+  }
 }
 
 function addClientProviderModelUsage(target, source, client) {
@@ -1299,7 +1369,10 @@ function addClientProviderModelUsage(target, source, client) {
     'clientProviderModelCacheReads',
     'clientProviderModelCacheWrites',
     'clientProviderModelOutputs',
-    'clientProviderModelUnclassifiedTokens'
+    'clientProviderModelUnclassifiedTokens',
+    'clientProviderModelTimedTokens',
+    'clientProviderModelTimedOutputTokens',
+    'clientProviderModelTimedDurationMs'
   ]) {
     const providers = source[field]?.[client];
     if (!providers || typeof providers !== 'object') continue;
@@ -1645,6 +1718,11 @@ function addPeriodInto(target, source) {
     if (source.modelUnclassifiedTokens?.[model]) target.modelUnclassifiedTokens[model] = (target.modelUnclassifiedTokens[model] || 0) + source.modelUnclassifiedTokens[model];
   }
   for (const [model, cost] of Object.entries(source.modelCosts)) target.modelCosts[model] = (target.modelCosts[model] || 0) + cost;
+  for (const field of ['modelTimedTokens', 'modelTimedOutputTokens', 'modelTimedDurationMs']) {
+    for (const [model, value] of Object.entries(source[field] || {})) {
+      target[field][model] = (target[field][model] || 0) + value;
+    }
+  }
   for (const [client, models] of Object.entries(source.clientModels)) {
     if (!target.clientModels[client]) target.clientModels[client] = {};
     for (const [model, tokens] of Object.entries(models)) {
@@ -1657,13 +1735,24 @@ function addPeriodInto(target, source) {
       target.clientModelCosts[client][model] = (target.clientModelCosts[client][model] || 0) + cost;
     }
   }
+  for (const field of ['clientModelTimedTokens', 'clientModelTimedOutputTokens', 'clientModelTimedDurationMs']) {
+    for (const [client, models] of Object.entries(source[field] || {})) {
+      if (!target[field][client]) target[field][client] = {};
+      for (const [model, value] of Object.entries(models || {})) {
+        target[field][client][model] = (target[field][client][model] || 0) + value;
+      }
+    }
+  }
   for (const field of [
     'clientProviderModels',
     'clientProviderModelCosts',
     'clientProviderModelCacheReads',
     'clientProviderModelCacheWrites',
     'clientProviderModelOutputs',
-    'clientProviderModelUnclassifiedTokens'
+    'clientProviderModelUnclassifiedTokens',
+    'clientProviderModelTimedTokens',
+    'clientProviderModelTimedOutputTokens',
+    'clientProviderModelTimedDurationMs'
   ]) {
     for (const [client, providers] of Object.entries(source[field] || {})) {
       if (!target[field][client]) target[field][client] = {};
@@ -1681,7 +1770,10 @@ function addPeriodInto(target, source) {
     'providerModelCacheReads',
     'providerModelCacheWrites',
     'providerModelOutputs',
-    'providerModelUnclassifiedTokens'
+    'providerModelUnclassifiedTokens',
+    'providerModelTimedTokens',
+    'providerModelTimedOutputTokens',
+    'providerModelTimedDurationMs'
   ]) {
     for (const [provider, models] of Object.entries(source[field] || {})) {
       if (!target[field][provider]) target[field][provider] = {};

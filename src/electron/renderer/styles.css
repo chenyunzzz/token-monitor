@@ -3047,6 +3047,13 @@ html.is-windows .settings-panel select option {
   text-align: right;
 }
 .model-tree-metrics > :last-child { min-width: 30px; color: var(--muted); }
+.model-tree-tps {
+  min-width: 66px;
+  color: var(--accent);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
 
 .home-panel {
   position: relative;

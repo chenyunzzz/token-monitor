@@ -397,6 +397,29 @@ test('live rate selects every active hub device or only this device by scope', (
   });
 });
 
+test('model live rate keeps provider routes and environments independent', () => {
+  let now = 0;
+  const tracker = tokenRateApi.createLiveTokenRateModelTracker({ now: () => now, activeMs: 8_000 });
+  const snapshot = (value) => ({
+    capabilities: { throughput: true },
+    providerModelTimedTokens: { ollama: { 'deepseek-v4-flash': value } },
+    providerModelTimedOutputTokens: { ollama: { 'deepseek-v4-flash': value / 2 } },
+    providerModelTimedDurationMs: { ollama: { 'deepseek-v4-flash': value * 10 } }
+  });
+  tracker.reset([
+    { id: 'Windows\u0000codex', period: snapshot(100) },
+    { id: 'WSL\u0000dsh', period: snapshot(200) }
+  ]);
+  now = 1000;
+  tracker.observe([
+    { id: 'Windows\u0000codex', period: snapshot(200) },
+    { id: 'WSL\u0000dsh', period: snapshot(400) }
+  ]);
+  assert.equal(tracker.getSampleFor('Windows\u0000codex', 'provider:ollama/deepseek-v4-flash').speed, 50);
+  assert.equal(tracker.getSampleFor('WSL\u0000dsh', 'provider:ollama/deepseek-v4-flash').speed, 50);
+  assert.equal(tracker.getSample('provider:ollama/deepseek-v4-flash').speed, 100);
+});
+
 test('holding the title mark accelerates from the real rate and keeps rising', () => {
   const { tokenRateBoostValue, tokenRateSettleValue, tokenRatePerSecond, tokenBurnPerMinute } = tokenRateFunctions();
   assert.equal(tokenRateBoostValue(0, 0), 0);

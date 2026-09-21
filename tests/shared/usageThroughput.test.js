@@ -74,6 +74,20 @@ test('throughput is summed from every entry performance block', () => {
   assert.equal(result.timedOutputTokens, 80);
 });
 
+test('throughput counters are retained independently for each model and provider route', () => {
+  const result = extractUsageFromTokscale({
+    entries: [
+      tokscaleEntry({ model: 'ollama-local/deepseek-v4-flash', provider: 'ollama', output: 40 }),
+      tokscaleEntry({ sessionId: 's2', model: 'opencode-go/deepseek-v4-flash', provider: 'opencode', output: 20 })
+    ]
+  });
+  assert.equal(result.modelTimedOutputTokens['ollama-local/deepseek-v4-flash'], 40);
+  assert.equal(result.modelTimedDurationMs['ollama-local/deepseek-v4-flash'], 1000);
+  assert.equal(result.providerModelTimedOutputTokens.ollama['ollama-local/deepseek-v4-flash'], 40);
+  assert.equal(result.providerModelTimedOutputTokens.opencode['deepseek-v4-flash'], 20);
+  assert.equal(result.clientProviderModelTimedDurationMs.claude.ollama['ollama-local/deepseek-v4-flash'], 1000);
+});
+
 test('an entry without a performance block contributes no throughput', () => {
   const result = extractUsageFromTokscale({ entries: [tokscaleEntry({ performance: undefined })] });
   assert.equal(result.timedDurationMs, 0);

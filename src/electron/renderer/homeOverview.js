@@ -155,6 +155,8 @@
       : visible.reduce((sum, row) => sum + Math.max(0, Number(row?.value || 0)), 0);
     return visible.map((row) => ({
       key: row.key || row.name || '',
+      rateKey: row.rateKey || '',
+      rateEntryId: row.rateEntryId || '',
       name: row.name || '',
       value: Math.max(0, Number(row.value || 0)),
       share: total > 0 ? Math.max(0, Number(row.value || 0)) / total : 0,

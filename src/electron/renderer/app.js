@@ -872,6 +872,10 @@ const liveTokenRateTracker = tokenRateApi.createLiveTokenRateGroupTracker({
   activeMs: LIVE_TOKEN_RATE_ACTIVE_MS,
   clearMs: LIVE_TOKEN_RATE_CLEAR_MS
 });
+const liveModelTokenRateTracker = tokenRateApi.createLiveTokenRateModelTracker({
+  now: () => Date.now(),
+  activeMs: LIVE_TOKEN_RATE_ACTIVE_MS
+});
 const displayLiveTokenRateTrackers = new Map();
 const displayLiveTokenRateContexts = new Map();
 let displayLiveTokenRateExpiryTimer = null;
@@ -879,6 +883,8 @@ let liveTokenRateContext = '';
 let liveTokenRateIdleTimer = null;
 let liveTokenRateAnimationTimer = null;
 let liveTokenRateRenderedRevision = 0;
+let liveModelTokenRateContext = '';
+let liveModelTokenRateExpiryTimer = null;
 
 function liveTokenRateSourceKey(periodSource) {
   return [
@@ -1051,6 +1057,144 @@ function observeLiveTokenRate(stats) {
   if (!result.changed) return;
   scheduleLiveTokenRateExpiry();
   renderLiveTokenRate();
+}
+
+function modelLiveRateKey(provider, model) {
+  const providerKey = String(provider || '').trim();
+  const rawModelKey = String(model || '').trim();
+  const modelKey = providerKey.toLowerCase() === 'antigravity' && rawModelKey.toLowerCase() === 'unknown'
+    ? 'auto-detected'
+    : rawModelKey;
+  return providerKey && modelKey
+    ? `provider:${providerKey}/${modelKey}`
+    : modelKey ? `model:${modelKey}` : '';
+}
+
+function scheduleLiveModelTokenRateExpiry() {
+  if (liveModelTokenRateExpiryTimer) clearTimeout(liveModelTokenRateExpiryTimer);
+  liveModelTokenRateExpiryTimer = null;
+  const expiresAt = liveModelTokenRateTracker.nextExpiryAt();
+  if (!expiresAt) return;
+  liveModelTokenRateExpiryTimer = setTimeout(() => {
+    liveModelTokenRateExpiryTimer = null;
+    if (visibleStatsSurface() === 'main') renderStatsUpdate();
+    scheduleLiveModelTokenRateExpiry();
+  }, Math.max(0, expiresAt - Date.now()) + 10);
+}
+
+function observeLiveModelTokenRates(stats) {
+  const selection = tokenRateApi.selectLiveTokenRatePeriods(
+    stats,
+    state.settings?.deviceId,
+    state.settings?.hubMode,
+    effectiveLiveTokenRateScope()
+  );
+  const selectedDeviceIds = new Set(selection.entries.map((entry) => String(entry.id || '').replace(/^device:/, '')));
+  const sourceDevices = modelSourceDevices(state.period);
+  const syncMode = state.settings?.hubMode === 'client' || state.settings?.hubMode === 'host';
+  const devices = sourceDevices.length > 0
+    ? sourceDevices.filter((device) => {
+      const rootId = String(device.deviceId || '').replace(/:(?:wsl|windows)$/, '');
+      return selectedDeviceIds.size === 0 || selectedDeviceIds.has(rootId) || selectedDeviceIds.has(String(device.deviceId || ''));
+    })
+    : (!syncMode ? [{
+      deviceId: 'local',
+      platform: state.appInfo?.platform || '',
+      periods: { [state.period]: stats?.periods?.[state.period] || {} }
+    }] : []);
+  const grouped = new Map();
+  for (const device of devices) {
+    const period = device.periods?.[state.period] || {};
+    const environment = modelTreeEnvironmentLabel(device);
+    const detail = deviceBreakdownApi.deviceBreakdownForPeriod(device, state.period, {
+      clientLabels,
+      clientColors,
+      fallbackColor: clientColors.default,
+      unattributedLabel: t('dashboard.tooltip.unclassified')
+    });
+    for (const tool of detail.tools) {
+      for (const model of tool.models || []) {
+        const timing = modelTimingCounters(period, tool.client, model.key);
+        if (!timing) continue;
+        const entryId = `${environment}\u0000${tool.client}`;
+        const entry = grouped.get(entryId) || { id: entryId, period: { capabilities: { throughput: true }, modelTimedTokens: {}, modelTimedOutputTokens: {}, modelTimedDurationMs: {}, providerModelTimedTokens: {}, providerModelTimedOutputTokens: {}, providerModelTimedDurationMs: {} } };
+        const modelKey = String(model.key || '').trim();
+        const providerRoute = modelKey.startsWith('provider:') ? modelKey.slice('provider:'.length) : '';
+        const separator = providerRoute.indexOf('/');
+        if (separator > 0) {
+          const provider = providerRoute.slice(0, separator);
+          const modelName = providerRoute.slice(separator + 1);
+          for (const [field, value] of [
+            ['providerModelTimedTokens', timing.timedTokens],
+            ['providerModelTimedOutputTokens', timing.timedOutputTokens],
+            ['providerModelTimedDurationMs', timing.timedDurationMs]
+          ]) {
+            if (!entry.period[field][provider]) entry.period[field][provider] = {};
+            entry.period[field][provider][modelName] = (entry.period[field][provider][modelName] || 0) + value;
+          }
+        } else {
+          entry.period.modelTimedTokens[modelKey] = (entry.period.modelTimedTokens[modelKey] || 0) + timing.timedTokens;
+          entry.period.modelTimedOutputTokens[modelKey] = (entry.period.modelTimedOutputTokens[modelKey] || 0) + timing.timedOutputTokens;
+          entry.period.modelTimedDurationMs[modelKey] = (entry.period.modelTimedDurationMs[modelKey] || 0) + timing.timedDurationMs;
+        }
+        grouped.set(entryId, entry);
+      }
+    }
+  }
+  const modelEntries = [...grouped.values()];
+  const context = [
+    state.mode,
+    state.settings?.hubMode || '',
+    state.settings?.hubUrl || '',
+    state.settings?.deviceId || '',
+    effectiveLiveTokenRateScope(),
+    selection.source,
+    state.period
+  ].join('|');
+  if (context !== liveModelTokenRateContext) {
+    liveModelTokenRateContext = context;
+    liveModelTokenRateTracker.reset(modelEntries);
+  } else {
+    liveModelTokenRateTracker.observe(modelEntries);
+  }
+  scheduleLiveModelTokenRateExpiry();
+}
+
+function modelTimingCounters(period, client, modelKey) {
+  const raw = String(modelKey || '').trim();
+  if (!raw) return null;
+  const providerRoute = raw.startsWith('provider:') ? raw.slice('provider:'.length) : '';
+  const separator = providerRoute.indexOf('/');
+  const fields = ['timedTokens', 'timedOutputTokens', 'timedDurationMs'];
+  const sources = providerRoute && separator > 0
+    ? (() => {
+      const provider = providerRoute.slice(0, separator);
+      const model = providerRoute.slice(separator + 1);
+      const providers = period.clientProviderModelTimedTokens?.[client] || {};
+      const match = Object.keys(providers).find((candidate) => (
+        (window.TokenMonitorProviderPresentation?.canonicalProviderId(candidate) || candidate) === provider
+      ));
+      const candidates = [model, model === 'auto-detected' ? 'unknown' : 'auto-detected'];
+      return fields.map((field) => {
+        const map = period[`clientProviderModel${field[0].toUpperCase()}${field.slice(1)}`]?.[client]?.[match || provider] || {};
+        const key = candidates.find((candidate) => Object.prototype.hasOwnProperty.call(map, candidate));
+        return key === undefined ? undefined : map[key];
+      });
+    })()
+    : fields.map((field) => {
+      const map = period[`clientModel${field[0].toUpperCase()}${field.slice(1)}`]?.[client] || {};
+      return Object.prototype.hasOwnProperty.call(map, raw) ? map[raw] : undefined;
+    });
+  if (sources.some((value) => value === undefined)) return null;
+  return {
+    timedTokens: Math.max(0, Number(sources[0]) || 0),
+    timedOutputTokens: Math.max(0, Number(sources[1]) || 0),
+    timedDurationMs: Math.max(0, Number(sources[2]) || 0)
+  };
+}
+
+function liveModelTokenRateForEntry(entryId, key) {
+  return liveModelTokenRateTracker.getSampleFor(String(entryId || ''), String(key || ''));
 }
 
 function formatLiveTokenRate(value) {
@@ -2748,7 +2892,11 @@ function modelTreeEnvironmentLabel(device) {
 }
 
 const SOURCE_PERIOD_MAP_FIELDS = [
-  'clients', 'models', 'clientModels', 'providerModels', 'clientProviderModels'
+  'clients', 'models', 'clientModels', 'providerModels', 'clientProviderModels',
+  'modelTimedTokens', 'modelTimedOutputTokens', 'modelTimedDurationMs',
+  'clientModelTimedTokens', 'clientModelTimedOutputTokens', 'clientModelTimedDurationMs',
+  'providerModelTimedTokens', 'providerModelTimedOutputTokens', 'providerModelTimedDurationMs',
+  'clientProviderModelTimedTokens', 'clientProviderModelTimedOutputTokens', 'clientProviderModelTimedDurationMs'
 ];
 
 function subtractSourceMap(base, source) {
@@ -2962,11 +3110,14 @@ function modelSourceRowsForPeriod(periodName = state.period) {
         const existing = rowsByIdentity.get(identity);
         if (existing) existing.value += model.value;
         else {
+          const modelKey = String(model.key || '').trim();
           rowsByIdentity.set(identity, {
             key: `${environment}/${tool.client}/${model.key}`,
             name,
             value: model.value,
             color: modelColor(model.name),
+            rateKey: modelKey.startsWith('provider:') ? modelKey : `model:${modelKey}`,
+            rateEntryId: `${environment}\u0000${tool.client}`,
             sourcePeriod
           });
         }
@@ -3111,6 +3262,10 @@ function modelTreeNodesForPeriod(period) {
               ? `${t('dashboard.tooltip.unclassified')} / ${model.name}`
               : model.name,
             value: model.value,
+            rateKey: provider.key && provider.key !== 'unclassified'
+              ? `provider:${provider.key}/${model.key}`
+              : `model:${model.key}`,
+            rateEntryId: `${environmentGroup.name}\u0000${tool.client}`,
             iconKey: model.name,
             iconBreakdown: 'model',
             hasChildren: false
@@ -3162,7 +3317,15 @@ function renderModelTree(period) {
     value.textContent = formatCompact(node.value);
     const share = document.createElement('span');
     share.textContent = formatPercent(total > 0 ? node.value / total * 100 : 0);
-    metrics.append(value, share);
+    if (node.level === 4 && node.rateKey) {
+      const rate = liveModelTokenRateForEntry(node.rateEntryId, node.rateKey);
+      const throughput = document.createElement('span');
+      throughput.className = 'model-tree-tps';
+      throughput.textContent = rate ? `${formatLiveTokenRate(rate.speed)} tok/s` : '— tok/s';
+      metrics.append(value, throughput, share);
+    } else {
+      metrics.append(value, share);
+    }
     row.append(left, metrics);
     if (node.hasChildren) {
       row.tabIndex = 0;
@@ -3250,7 +3413,8 @@ function modelAttributionRows(period) {
       cacheReadTokens: group.cacheReadTokens,
       cacheWriteTokens: group.cacheWriteTokens,
       outputTokens: group.outputTokens,
-      unclassifiedTokens: group.unclassifiedTokens
+      unclassifiedTokens: group.unclassifiedTokens,
+      rateKey: modelLiveRateKey(group.provider, group.model)
     };
   }
   for (const [model, total] of Object.entries(period?.models || {})) {
@@ -3270,6 +3434,8 @@ function modelAttributionRows(period) {
         - Object.entries(providerModels).reduce((sum, [provider]) => sum + (Number(period?.providerModelOutputs?.[provider]?.[model]) || 0), 0)),
       unclassifiedTokens: Math.max(0, (Number(period?.modelUnclassifiedTokens?.[model]) || 0)
         - Object.entries(providerModels).reduce((sum, [provider]) => sum + (Number(period?.providerModelUnclassifiedTokens?.[provider]?.[model]) || 0), 0))
+      ,
+      rateKey: modelLiveRateKey('', model)
     };
   }
   return periodAttributionRows(period, values, costs).map((row) => ({ ...row, ...(metadata[row.key] || {}) }));
@@ -3280,7 +3446,7 @@ function modelRowsForPeriodWithProviders(period, rankingMetric = state.settings?
   // periodAttributionRows(period, period?.models, period?.modelCosts).
   // Component lookup remains keyed by the aggregate model:
   // attributionComponent(period, 'modelUnclassifiedTokens', model).
-  const modelRows = modelAttributionRows(period).map(({ key: modelKey, model, name, value, cost, provider, cacheReadTokens, cacheWriteTokens, outputTokens, unclassifiedTokens }) => ({
+  const modelRows = modelAttributionRows(period).map(({ key: modelKey, model, name, value, cost, provider, rateKey, cacheReadTokens, cacheWriteTokens, outputTokens, unclassifiedTokens }) => ({
     key: modelKey,
     name: modelKey === usageAttributionRowsApi.UNATTRIBUTED_KEY
       ? t('dashboard.tooltip.unclassified')
@@ -3292,7 +3458,8 @@ function modelRowsForPeriodWithProviders(period, rankingMetric = state.settings?
     cacheReadTokens: provider ? cacheReadTokens : attributionComponent(period, 'modelCacheReads', modelKey),
     cacheWriteTokens: provider ? cacheWriteTokens : attributionComponent(period, 'modelCacheWrites', modelKey),
     outputTokens: provider ? outputTokens : attributionComponent(period, 'modelOutputs', modelKey),
-    unclassifiedTokens: provider ? unclassifiedTokens : attributionComponent(period, 'modelUnclassifiedTokens', modelKey)
+    unclassifiedTokens: provider ? unclassifiedTokens : attributionComponent(period, 'modelUnclassifiedTokens', modelKey),
+    rateKey
   }));
   if (modelRows.length > 0) {
     return usageAttributionRowsApi.rankRowsWithValues(modelRows, rankingMetric);
@@ -6232,7 +6399,12 @@ function renderHomeModelModule(period) {
     value.textContent = formatCompact(row.value);
     const share = document.createElement('span');
     share.className = 'home-list-aux';
-    share.textContent = formatPercent(row.share * 100);
+    const rate = row.rateKey && row.rateEntryId
+      ? liveModelTokenRateForEntry(row.rateEntryId, row.rateKey)
+      : null;
+    share.textContent = rate
+      ? `${formatLiveTokenRate(rate.speed)} tok/s · ${formatPercent(row.share * 100)}`
+      : formatPercent(row.share * 100);
     item.append(mark, name, value, share);
     body.append(item);
   }
@@ -12288,6 +12460,7 @@ window.tokenMonitor.onStatsPush?.((payload) => {
     state.stats = overlayAllTimeSessions(payload.data.stats);
     observeLiveTokenRate(state.stats);
     observeDisplayLiveTokenRates(state.stats);
+    observeLiveModelTokenRates(state.stats);
     applyCodexActiveAccountFromStats();
     // Progressive mid-tick pushes never carry a fresh history scan (see
     // AGENTS.md collector notes), so only the final push can retire the

@@ -242,11 +242,178 @@
       return { ...lastDisplaySample, expiresAt, idle: true };
     }
 
+    // Model rows need the same per-device delta isolation as the headline rate, but
+    // only for the row currently being rendered. Expose the matched sample without
+    // adding another timer or another polling loop.
+    function getSampleFor(id) {
+      const tracker = trackers.get(String(id || ''));
+      const sample = tracker?.getSample();
+      if (!sample) return null;
+      const timestamp = Number(now()) || 0;
+      return timestamp < sample.sampledAt + lifetime ? { ...sample, idle: false } : null;
+    }
+
     function nextExpiryAt() {
       return getSample()?.expiresAt || null;
     }
 
-    return { getSample, nextExpiryAt, observe, reset };
+    return { getSample, getSampleFor, nextExpiryAt, observe, reset };
+  }
+
+  function modelRateCounters(period) {
+    if (period?.capabilities?.throughput === false) return {};
+    const counters = {};
+    const providerMaps = [
+      ['providerModelTimedTokens', 'timedTokens'],
+      ['providerModelTimedOutputTokens', 'timedOutputTokens'],
+      ['providerModelTimedDurationMs', 'timedDurationMs']
+    ];
+    const providerKeys = new Set();
+    for (const [field] of providerMaps) {
+      for (const [provider, models] of Object.entries(period?.[field] || {})) {
+        for (const model of Object.keys(models || {})) providerKeys.add(`${provider}\u0000${model}`);
+      }
+    }
+    for (const key of providerKeys) {
+      const separator = key.indexOf('\u0000');
+      const provider = key.slice(0, separator);
+      const model = key.slice(separator + 1);
+      counters[`provider:${provider}/${model}`] = {
+        timedTokens: Number(period?.providerModelTimedTokens?.[provider]?.[model] || 0),
+        timedOutputTokens: Number(period?.providerModelTimedOutputTokens?.[provider]?.[model] || 0),
+        timedDurationMs: Number(period?.providerModelTimedDurationMs?.[provider]?.[model] || 0)
+      };
+    }
+    if (Object.keys(counters).length > 0) return counters;
+    const modelKeys = new Set();
+    for (const field of ['modelTimedTokens', 'modelTimedOutputTokens', 'modelTimedDurationMs']) {
+      for (const model of Object.keys(period?.[field] || {})) modelKeys.add(model);
+    }
+    for (const model of modelKeys) {
+      counters[`model:${model}`] = {
+        timedTokens: Number(period?.modelTimedTokens?.[model] || 0),
+        timedOutputTokens: Number(period?.modelTimedOutputTokens?.[model] || 0),
+        timedDurationMs: Number(period?.modelTimedDurationMs?.[model] || 0)
+      };
+    }
+    return counters;
+  }
+
+  // A single lightweight tracker for all visible model identities. It stores only the
+  // last counter baseline and the latest short-lived sample; it never scans logs or
+  // starts a timer per model.
+  function createLiveTokenRateModelTracker({ now = defaultNow, activeMs = 8000 } = {}) {
+    if (typeof now !== 'function') throw new TypeError('now must be a function');
+    const lifetime = positiveNumber(activeMs);
+    if (!lifetime) throw new TypeError('activeMs must be a positive number');
+    const devices = new Map();
+    let revision = 0;
+
+    function normalizedEntries(entries) {
+      const result = [];
+      const seen = new Set();
+      for (const entry of Array.isArray(entries) ? entries : []) {
+        const id = String(entry?.id || '').trim();
+        if (!id || seen.has(id)) continue;
+        seen.add(id);
+        result.push({ id, counters: modelRateCounters(entry?.period) });
+      }
+      return result;
+    }
+
+    function reset(entries = []) {
+      devices.clear();
+      for (const entry of normalizedEntries(entries)) {
+        const models = new Map();
+        for (const [key, counters] of Object.entries(entry.counters)) {
+          const tracker = createLiveTokenRateTracker({ now });
+          tracker.reset(counters);
+          models.set(`${entry.id}\u0000${key}`, tracker);
+        }
+        devices.set(entry.id, models);
+      }
+    }
+
+    function observe(entries = []) {
+      const nextEntries = normalizedEntries(entries);
+      const present = new Set(nextEntries.map((entry) => entry.id));
+      let changed = false;
+      for (const id of devices.keys()) {
+        if (present.has(id)) continue;
+        devices.delete(id);
+        changed = true;
+      }
+      for (const entry of nextEntries) {
+        let models = devices.get(entry.id);
+        if (!models) {
+          models = new Map();
+          devices.set(entry.id, models);
+          for (const [key, counters] of Object.entries(entry.counters)) {
+            const tracker = createLiveTokenRateTracker({ now });
+            tracker.reset(counters);
+            models.set(`${entry.id}\u0000${key}`, tracker);
+          }
+          continue;
+        }
+        for (const key of models.keys()) {
+          const modelKey = key.slice(entry.id.length + 1);
+          if (Object.prototype.hasOwnProperty.call(entry.counters, modelKey)) continue;
+          models.delete(key);
+          changed = true;
+        }
+        for (const [key, counters] of Object.entries(entry.counters)) {
+          const scopedKey = `${entry.id}\u0000${key}`;
+          let tracker = models.get(scopedKey);
+          if (!tracker) {
+            tracker = createLiveTokenRateTracker({ now });
+            tracker.reset(counters);
+            models.set(scopedKey, tracker);
+            continue;
+          }
+          const previous = tracker.getSample();
+          const sample = tracker.observe(counters);
+          if (sample !== previous) changed = true;
+          if (sample && sample !== previous) revision += 1;
+        }
+      }
+      return { changed };
+    }
+
+    function getSampleFor(id, key) {
+      const models = devices.get(String(id || ''));
+      const sample = models?.get(`${String(id || '')}\u0000${String(key || '')}`)?.getSample();
+      const timestamp = Number(now()) || 0;
+      return sample && timestamp < sample.sampledAt + lifetime ? { ...sample, idle: false } : null;
+    }
+
+    function getSample(key) {
+      const samples = [];
+      for (const deviceId of devices.keys()) {
+        const sample = getSampleFor(deviceId, key);
+        if (sample) samples.push(sample);
+      }
+      if (!samples.length) return null;
+      return {
+        speed: cappedTokenRate(samples.reduce((sum, sample) => sum + sample.speed, 0)),
+        burn: cappedTokenRate(samples.reduce((sum, sample) => sum + sample.burn, 0)),
+        sampledAt: Math.max(...samples.map((sample) => sample.sampledAt)),
+        deviceCount: samples.length,
+        revision
+      };
+    }
+
+    function nextExpiryAt() {
+      let next = Infinity;
+      for (const models of devices.values()) {
+        for (const tracker of models.values()) {
+          const sample = tracker.getSample();
+          if (sample) next = Math.min(next, sample.sampledAt + lifetime);
+        }
+      }
+      return Number.isFinite(next) ? next : null;
+    }
+
+    return { getSample, getSampleFor, nextExpiryAt, observe, reset };
   }
 
   function selectLiveTokenRatePeriods(stats, deviceId, hubMode = 'local', scope = 'all') {
@@ -494,6 +661,7 @@
     TOKEN_RATE_SETTLE_MS,
     cappedTokenRate,
     createLiveTokenRateGroupTracker,
+    createLiveTokenRateModelTracker,
     createLiveTokenRateTracker,
     createTokenRateBoostController,
     positiveNumber,
