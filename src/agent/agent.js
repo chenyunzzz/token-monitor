@@ -26,10 +26,11 @@ const {
   readSessionUsageArchiveSnapshot
 } = require('../shared/sessionUsageArchiveStore');
 const { createCursorUsageEventIndex } = require('../shared/providers/cursor/usageEvents');
+const { hubUrlCandidates, isHubNetworkError } = require('../shared/hubEndpoint');
 
 loadDotEnv();
 const args = parseArgs(process.argv.slice(2));
-const hubUrl = String(args.hub || args.hubUrl || process.env.TOKEN_MONITOR_HUB_URL || 'http://127.0.0.1:17321').replace(/\/$/, '');
+const configuredHubUrl = String(args.hub || args.hubUrl || process.env.TOKEN_MONITOR_HUB_URL || 'http://127.0.0.1:17321').replace(/\/$/, '');
 const secret = String(args.secret || process.env.TOKEN_MONITOR_SECRET || '').trim();
 const deviceId = String(args.device || args.deviceId || process.env.TOKEN_MONITOR_DEVICE_ID || defaultDeviceId());
 const intervalMs = Number(args.interval || args.intervalMs || process.env.TOKEN_MONITOR_INTERVAL_MS || 5 * 60 * 1000);
@@ -127,17 +128,37 @@ function summaryWithSessionUsageArchive(summary, now = new Date()) {
 }
 
 async function postUsage(summary) {
-  const { response } = await postSyncPayload(fetch, `${hubUrl}/api/ingest`, {
-    headers: {
-      'content-type': 'application/json',
-      [HUB_RESPONSE_HEADER]: HUB_RESPONSE_MINIMAL,
-      ...(secret ? { authorization: `Bearer ${secret}` } : {})
-    },
-    summary,
-    logger: (message) => console.warn(`[sync] ${message}`)
-  });
-  if (!response.ok) throw new Error(`Hub responded ${response.status}: ${(await response.text()).slice(0, 300)}`);
-  return response.json();
+  let lastError = null;
+  const endpoints = hubUrlCandidates(configuredHubUrl);
+  for (let index = 0; index < endpoints.length; index += 1) {
+    const endpoint = endpoints[index];
+    try {
+      const fetchWithTimeout = (url, init = {}) => {
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 15_000);
+        return fetch(url, { ...init, signal: controller.signal }).finally(() => clearTimeout(timeout));
+      };
+      const { response } = await postSyncPayload(fetchWithTimeout, `${endpoint}/api/ingest`, {
+        headers: {
+          'content-type': 'application/json',
+          [HUB_RESPONSE_HEADER]: HUB_RESPONSE_MINIMAL,
+          ...(secret ? { authorization: `Bearer ${secret}` } : {})
+        },
+        summary,
+        logger: (message) => console.warn(`[sync] ${message}`)
+      });
+      if (!response.ok) throw new Error(`Hub responded ${response.status}: ${(await response.text()).slice(0, 300)}`);
+      return response.json();
+    } catch (error) {
+      lastError = error;
+      if (!isHubNetworkError(error)) throw error;
+      if (index + 1 < endpoints.length) {
+        console.warn(`[sync] hub ${endpoint} unavailable; trying the current WSL gateway`);
+      }
+    }
+  }
+  const cause = lastError?.cause?.code ? ` (${lastError.cause.code})` : '';
+  throw new Error(`Hub sync failed for ${configuredHubUrl}: ${lastError?.message || 'unknown error'}${cause}`);
 }
 
 async function deliver(summary) {
@@ -162,7 +183,7 @@ function registerPidFile(stopRuntime) {
 }
 
 async function main() {
-  const startupMessage = `Token Monitor agent device=${deviceId} hub=${hubUrl} intervalMs=${intervalMs} watch=${watchEnabled} projects=${projectsEnabled ? 'on' : 'off'} history=${historyEnabled ? 'on' : 'off'} sessionArchive=${sessionUsageArchiveEnabled ? 'on' : 'off'} limits=${limitsEnabled ? `${limitProviders || 'none'}:${limitsRefreshMode === 'adaptive' ? 'adaptive' : `${limitsRefreshMs}ms`}` : 'off'}`;
+  const startupMessage = `Token Monitor agent device=${deviceId} hub=${configuredHubUrl} intervalMs=${intervalMs} watch=${watchEnabled} projects=${projectsEnabled ? 'on' : 'off'} history=${historyEnabled ? 'on' : 'off'} sessionArchive=${sessionUsageArchiveEnabled ? 'on' : 'off'} limits=${limitsEnabled ? `${limitProviders || 'none'}:${limitsRefreshMode === 'adaptive' ? 'adaptive' : `${limitsRefreshMs}ms`}` : 'off'}`;
   if (dryRun) console.error(startupMessage);
   else console.log(startupMessage);
   if (!secret) console.warn('Warning: TOKEN_MONITOR_SECRET is not set. Posting without authorization header.');
