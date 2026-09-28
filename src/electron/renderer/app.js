@@ -1118,7 +1118,7 @@ function observeLiveModelTokenRates(stats) {
         const timing = modelTimingCounters(period, tool.client, model.key);
         if (!timing) continue;
         const entryId = `${environment}\u0000${tool.client}`;
-        const entry = grouped.get(entryId) || { id: entryId, period: { capabilities: { throughput: true }, modelTimedTokens: {}, modelTimedOutputTokens: {}, modelTimedDurationMs: {}, providerModelTimedTokens: {}, providerModelTimedOutputTokens: {}, providerModelTimedDurationMs: {} } };
+        const entry = grouped.get(entryId) || { id: entryId, period: { capabilities: { throughput: true }, modelTimedTokens: {}, modelTimedOutputTokens: {}, modelTimedDurationMs: {}, modelOutputs: {}, providerModelTimedTokens: {}, providerModelTimedOutputTokens: {}, providerModelTimedDurationMs: {}, providerModelOutputs: {} } };
         const modelKey = String(model.key || '').trim();
         const providerRoute = modelKey.startsWith('provider:') ? modelKey.slice('provider:'.length) : '';
         const separator = providerRoute.indexOf('/');
@@ -1128,7 +1128,8 @@ function observeLiveModelTokenRates(stats) {
           for (const [field, value] of [
             ['providerModelTimedTokens', timing.timedTokens],
             ['providerModelTimedOutputTokens', timing.timedOutputTokens],
-            ['providerModelTimedDurationMs', timing.timedDurationMs]
+            ['providerModelTimedDurationMs', timing.timedDurationMs],
+            ['providerModelOutputs', timing.observedOutputTokens]
           ]) {
             if (!entry.period[field][provider]) entry.period[field][provider] = {};
             entry.period[field][provider][modelName] = (entry.period[field][provider][modelName] || 0) + value;
@@ -1137,6 +1138,7 @@ function observeLiveModelTokenRates(stats) {
           entry.period.modelTimedTokens[modelKey] = (entry.period.modelTimedTokens[modelKey] || 0) + timing.timedTokens;
           entry.period.modelTimedOutputTokens[modelKey] = (entry.period.modelTimedOutputTokens[modelKey] || 0) + timing.timedOutputTokens;
           entry.period.modelTimedDurationMs[modelKey] = (entry.period.modelTimedDurationMs[modelKey] || 0) + timing.timedDurationMs;
+          entry.period.modelOutputs[modelKey] = (entry.period.modelOutputs[modelKey] || 0) + timing.observedOutputTokens;
         }
         grouped.set(entryId, entry);
       }
@@ -1187,7 +1189,7 @@ function modelTimingCounters(period, client, modelKey) {
   if (!raw) return null;
   const providerRoute = raw.startsWith('provider:') ? raw.slice('provider:'.length) : '';
   const separator = providerRoute.indexOf('/');
-  const fields = ['timedTokens', 'timedOutputTokens', 'timedDurationMs'];
+  const fields = ['timedTokens', 'timedOutputTokens', 'timedDurationMs', 'outputs'];
   const sources = providerRoute && separator > 0
     ? (() => {
       const provider = providerRoute.slice(0, separator);
@@ -1207,11 +1209,11 @@ function modelTimingCounters(period, client, modelKey) {
       const map = period[`clientModel${field[0].toUpperCase()}${field.slice(1)}`]?.[client] || {};
       return Object.prototype.hasOwnProperty.call(map, raw) ? map[raw] : undefined;
     });
-  if (sources.some((value) => value === undefined)) return null;
   return {
     timedTokens: Math.max(0, Number(sources[0]) || 0),
     timedOutputTokens: Math.max(0, Number(sources[1]) || 0),
-    timedDurationMs: Math.max(0, Number(sources[2]) || 0)
+    timedDurationMs: Math.max(0, Number(sources[2]) || 0),
+    observedOutputTokens: Math.max(0, Number(sources[3]) || 0)
   };
 }
 
@@ -3348,11 +3350,13 @@ function renderModelTree(period) {
         || liveModelTokenRateTracker.getAverageFor(node.rateEntryId, node.rateKey);
       const throughput = document.createElement('span');
       throughput.className = 'model-tree-tps';
-      throughput.classList.toggle('is-average', Boolean(rate?.average));
+      throughput.classList.toggle('is-average', Boolean(rate?.average || rate?.approximate));
       throughput.textContent = rate
-        ? `${rate.average ? '≈ ' : ''}${formatLiveTokenRate(rate.speed)} tok/s`
+        ? `${rate.average || rate.approximate ? '≈ ' : ''}${formatLiveTokenRate(rate.speed)} tok/s`
         : '— tok/s';
-      throughput.title = rate?.average
+      throughput.title = rate?.approximate
+        ? 'Approximate output-token rate between successful usage scans; the source does not expose generation timing.'
+        : rate?.average
         ? 'Based on recorded model performance; a fresh scan will replace it with live TPS.'
         : 'Waiting for verified model performance data.';
       metrics.append(value, throughput, share);

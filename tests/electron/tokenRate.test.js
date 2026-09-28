@@ -421,6 +421,25 @@ test('model live rate keeps provider routes and environments independent', () =>
   assert.equal(tracker.getAverageFor('Windows\u0000codex', 'provider:ollama/deepseek-v4-flash').speed, 50);
 });
 
+test('model rows show an explicitly approximate output rate when the source has no timing data', () => {
+  let now = 0;
+  const tracker = tokenRateApi.createLiveTokenRateModelTracker({ now: () => now, observedRetentionMs: 60_000 });
+  const snapshot = (output) => ({
+    providerModelTimedTokens: { google: { 'gemini-3.8-flash': 0 } },
+    providerModelTimedOutputTokens: { google: { 'gemini-3.8-flash': 0 } },
+    providerModelTimedDurationMs: { google: { 'gemini-3.8-flash': 0 } },
+    providerModelOutputs: { google: { 'gemini-3.8-flash': output } }
+  });
+  tracker.reset([{ id: 'WSL\u0000antigravity', period: snapshot(100) }]);
+  now = 5_000;
+  tracker.observe([{ id: 'WSL\u0000antigravity', period: snapshot(250) }]);
+  const sample = tracker.getSampleFor('WSL\u0000antigravity', 'provider:google/gemini-3.8-flash');
+  assert.equal(sample.speed, 30);
+  assert.equal(sample.approximate, true);
+  assert.equal(sample.idle, true);
+  assert.equal(tracker.getAverageFor('WSL\u0000antigravity', 'provider:google/gemini-3.8-flash').approximate, true);
+});
+
 test('holding the title mark accelerates from the real rate and keeps rising', () => {
   const { tokenRateBoostValue, tokenRateSettleValue, tokenRatePerSecond, tokenBurnPerMinute } = tokenRateFunctions();
   assert.equal(tokenRateBoostValue(0, 0), 0);

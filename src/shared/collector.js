@@ -2959,7 +2959,7 @@ function watcherOptions(usePolling, ignored) {
 // its -wal, so a genuine change still produces an event; a client whose scan was
 // measured NOT to rewrite its sidecar (micode) is deliberately absent here, and
 // adding a client to this list asserts a measurement rather than a hunch.
-const SELF_WATCHED_SQLITE_SIDECAR_CLIENTS = Object.freeze(['qodercn', 'zcode']);
+const SELF_WATCHED_SQLITE_SIDECAR_CLIENTS = Object.freeze(['antigravity', 'qodercn', 'zcode']);
 
 function isSelfWatchSqliteSidecarEvent(filePath, rootsByClient = {}) {
   // Match SQLite's wal-index suffix, not one client's database basename: ZCode's

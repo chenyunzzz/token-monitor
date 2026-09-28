@@ -2971,16 +2971,18 @@ test('smart collection uses native watching and skips idle intervals after start
 // Our own read-only SQLite scan recreates the wal-index, and that write reaches
 // the watcher as a normal change. If the sidecar is watched, the collector
 // re-triggers itself: measured 20/20 scans rewrote zcode's db.sqlite-shm while
-// idle time rewrote it 0 times in 40s.
+// idle time rewrote it 0 times in 40s; one Antigravity CLI DB read also changed
+// its conversation db-shm mtime.
 test('self-watch db-shm events are ignored for every client whose scan recreates the sidecar', () => {
   const { isSelfWatchSqliteSidecarEvent } = freshCollector();
+  const antigravityRoot = path.join(os.tmpdir(), '.gemini', 'antigravity-cli', 'conversations');
   const qoderRoot = path.join(os.tmpdir(), 'QoderCN', 'db');
   const zcodeRoot = path.join(os.tmpdir(), 'zcode', 'cli', 'db');
-  const roots = { qodercn: [qoderRoot], zcode: [zcodeRoot] };
+  const roots = { antigravity: [antigravityRoot], qodercn: [qoderRoot], zcode: [zcodeRoot] };
 
   // Each client keeps its own database basename: Qoder CN names it local.db,
-  // ZCode names it db.sqlite.
-  for (const [root, base] of [[qoderRoot, 'local.db'], [zcodeRoot, 'db.sqlite']]) {
+  // ZCode names it db.sqlite; Antigravity uses per-conversation UUID databases.
+  for (const [root, base] of [[antigravityRoot, 'conversation.db'], [qoderRoot, 'local.db'], [zcodeRoot, 'db.sqlite']]) {
     assert.equal(isSelfWatchSqliteSidecarEvent(path.join(root, base + '-shm'), roots), true);
     assert.equal(isSelfWatchSqliteSidecarEvent(path.join(root, base + '-wal'), roots), false,
       'the -wal carries real data and must still trigger a scan');

@@ -284,6 +284,9 @@
         for (const model of Object.keys(models || {})) providerKeys.add(`${provider}\u0000${model}`);
       }
     }
+    for (const [provider, models] of Object.entries(period?.providerModelOutputs || {})) {
+      for (const model of Object.keys(models || {})) providerKeys.add(`${provider}\u0000${model}`);
+    }
     for (const key of providerKeys) {
       const separator = key.indexOf('\u0000');
       const provider = key.slice(0, separator);
@@ -291,19 +294,21 @@
       counters[`provider:${provider}/${model}`] = {
         timedTokens: Number(period?.providerModelTimedTokens?.[provider]?.[model] || 0),
         timedOutputTokens: Number(period?.providerModelTimedOutputTokens?.[provider]?.[model] || 0),
-        timedDurationMs: Number(period?.providerModelTimedDurationMs?.[provider]?.[model] || 0)
+        timedDurationMs: Number(period?.providerModelTimedDurationMs?.[provider]?.[model] || 0),
+        observedOutputTokens: Number(period?.providerModelOutputs?.[provider]?.[model] || 0)
       };
     }
     if (Object.keys(counters).length > 0) return counters;
     const modelKeys = new Set();
-    for (const field of ['modelTimedTokens', 'modelTimedOutputTokens', 'modelTimedDurationMs']) {
+    for (const field of ['modelTimedTokens', 'modelTimedOutputTokens', 'modelTimedDurationMs', 'modelOutputs']) {
       for (const model of Object.keys(period?.[field] || {})) modelKeys.add(model);
     }
     for (const model of modelKeys) {
       counters[`model:${model}`] = {
         timedTokens: Number(period?.modelTimedTokens?.[model] || 0),
         timedOutputTokens: Number(period?.modelTimedOutputTokens?.[model] || 0),
-        timedDurationMs: Number(period?.modelTimedDurationMs?.[model] || 0)
+        timedDurationMs: Number(period?.modelTimedDurationMs?.[model] || 0),
+        observedOutputTokens: Number(period?.modelOutputs?.[model] || 0)
       };
     }
     return counters;
@@ -312,10 +317,12 @@
   // A single lightweight tracker for all visible model identities. It stores only the
   // last counter baseline and the latest short-lived sample; it never scans logs or
   // starts a timer per model.
-  function createLiveTokenRateModelTracker({ now = defaultNow, activeMs = 8000 } = {}) {
+  function createLiveTokenRateModelTracker({ now = defaultNow, activeMs = 8000, observedRetentionMs = 900_000 } = {}) {
     if (typeof now !== 'function') throw new TypeError('now must be a function');
     const lifetime = positiveNumber(activeMs);
     if (!lifetime) throw new TypeError('activeMs must be a positive number');
+    const observedLifetime = positiveNumber(observedRetentionMs);
+    if (!observedLifetime) throw new TypeError('observedRetentionMs must be a positive number');
     const devices = new Map();
     let revision = 0;
 
@@ -338,7 +345,12 @@
         for (const [key, counters] of Object.entries(entry.counters)) {
           const tracker = createLiveTokenRateTracker({ now });
           tracker.reset(counters);
-          models.set(`${entry.id}\u0000${key}`, tracker);
+          models.set(`${entry.id}\u0000${key}`, {
+            tracker,
+            observedOutputTokens: counters.observedOutputTokens,
+            observedAt: Number(now()) || 0,
+            observedSample: null
+          });
         }
         devices.set(entry.id, models);
       }
@@ -361,7 +373,12 @@
           for (const [key, counters] of Object.entries(entry.counters)) {
             const tracker = createLiveTokenRateTracker({ now });
             tracker.reset(counters);
-            models.set(`${entry.id}\u0000${key}`, tracker);
+            models.set(`${entry.id}\u0000${key}`, {
+              tracker,
+              observedOutputTokens: counters.observedOutputTokens,
+              observedAt: Number(now()) || 0,
+              observedSample: null
+            });
           }
           continue;
         }
@@ -380,10 +397,24 @@
             models.set(scopedKey, tracker);
             continue;
           }
-          const previous = tracker.getSample();
-          const sample = tracker.observe(counters);
-          if (sample !== previous) changed = true;
-          if (sample && sample !== previous) revision += 1;
+          const previousSample = tracker.tracker.getSample();
+          const sample = tracker.tracker.observe(counters);
+          const currentAt = Number(now()) || 0;
+          const elapsedMs = currentAt - tracker.observedAt;
+          const outputDelta = Number(counters.observedOutputTokens || 0) - tracker.observedOutputTokens;
+          if (outputDelta < 0) {
+            tracker.observedSample = null;
+          } else if (outputDelta > 0 && elapsedMs >= 1000) {
+            tracker.observedSample = {
+              speed: tokenRatePerSecond({ timedOutputTokens: outputDelta, timedDurationMs: elapsedMs }),
+              sampledAt: currentAt,
+              approximate: true
+            };
+          }
+          tracker.observedOutputTokens = Number(counters.observedOutputTokens || 0);
+          tracker.observedAt = currentAt;
+          if (sample !== previousSample || outputDelta !== 0) changed = true;
+          if ((sample && sample !== previousSample) || outputDelta > 0) revision += 1;
         }
       }
       return { changed };
@@ -391,15 +422,22 @@
 
     function getSampleFor(id, key) {
       const models = devices.get(String(id || ''));
-      const sample = models?.get(`${String(id || '')}\u0000${String(key || '')}`)?.getSample();
+      const state = models?.get(`${String(id || '')}\u0000${String(key || '')}`);
+      const sample = state?.tracker.getSample();
       const timestamp = Number(now()) || 0;
-      return sample && timestamp < sample.sampledAt + lifetime ? { ...sample, idle: false } : null;
+      if (sample && timestamp < sample.sampledAt + lifetime) return { ...sample, idle: false };
+      const observed = state?.observedSample;
+      return observed && timestamp < observed.sampledAt + observedLifetime
+        ? { ...observed, idle: true }
+        : null;
     }
 
     function getAverageFor(id, key) {
-      return devices.get(String(id || ''))
-        ?.get(`${String(id || '')}\u0000${String(key || '')}`)
-        ?.average() || null;
+      const state = devices.get(String(id || ''))
+        ?.get(`${String(id || '')}\u0000${String(key || '')}`);
+      return state?.tracker.average()
+        || (state?.observedSample ? { ...state.observedSample, idle: true } : null)
+        || null;
     }
 
     function getSample(key) {
@@ -422,8 +460,9 @@
       let next = Infinity;
       for (const models of devices.values()) {
         for (const tracker of models.values()) {
-          const sample = tracker.getSample();
+          const sample = tracker.tracker.getSample();
           if (sample) next = Math.min(next, sample.sampledAt + lifetime);
+          if (tracker.observedSample) next = Math.min(next, tracker.observedSample.sampledAt + observedLifetime);
         }
       }
       return Number.isFinite(next) ? next : null;
