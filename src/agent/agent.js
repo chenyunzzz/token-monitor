@@ -2,9 +2,12 @@
 
 const fs = require('node:fs');
 const path = require('node:path');
-const { defaultDeviceId, loadDotEnv, parseArgs, pidFilePath } = require('../shared/config');
+const {
+  defaultDeviceId, loadDotEnv, parseArgs, pidFilePath
+} = require('../shared/config');
 const { appVersion } = require('../shared/appVersion');
 const { clientsCsvForSetting } = require('../shared/clientTracking');
+const { seedAgentClients } = require('./seedClients');
 const { normalizeHistoryIntervalMs } = require('../shared/collector');
 const {
   normalizeLimitsRefreshMode,
@@ -20,11 +23,11 @@ const {
   applySessionUsageArchive,
   sessionUsageArchiveDate,
   updateSessionUsageArchive
-} = require('../shared/sessionUsageArchive');
+} = require('../shared/usage/sessionUsageArchive');
 const {
   createSessionUsageArchiveStore,
   readSessionUsageArchiveSnapshot
-} = require('../shared/sessionUsageArchiveStore');
+} = require('../shared/usage/sessionUsageArchiveStore');
 const { createCursorUsageEventIndex } = require('../shared/providers/cursor/usageEvents');
 const { hubUrlCandidates, isHubNetworkError } = require('../shared/hubEndpoint');
 
@@ -36,7 +39,16 @@ const deviceId = String(args.device || args.deviceId || process.env.TOKEN_MONITO
 const intervalMs = Number(args.interval || args.intervalMs || process.env.TOKEN_MONITOR_INTERVAL_MS || 5 * 60 * 1000);
 const watchEnabled = String(args.watch ?? process.env.TOKEN_MONITOR_WATCH ?? '1') !== '0';
 const watchDebounceMs = Number(args.watchDebounceMs || process.env.TOKEN_MONITOR_WATCH_DEBOUNCE_MS || 1500);
-const clients = clientsCsvForSetting(args.clients ?? process.env.TOKEN_MONITOR_CLIENTS);
+// A headless deployment has no settings.json, so the enabled-client CSV is a
+// fresh declaration on every launch. That makes the identity-split migration a
+// different problem from the widget's: there is no persisted user choice to
+// leave alone, but there is still a pre-split meaning to carry forward, because
+// a CSV written before the split listed the merged id and counted both products.
+// The marker therefore lives beside the collector anchor, and it is what stops
+// the seed from re-adding a client the operator deliberately removed afterwards.
+const clients = seedAgentClients(clientsCsvForSetting(args.clients ?? process.env.TOKEN_MONITOR_CLIENTS), {
+  persist: !(args['dry-run'] || args.dryRun)
+});
 const allTimeSince = String(args.since || args.allTimeSince || process.env.TOKEN_MONITOR_ALL_TIME_SINCE || '2024-01-01');
 const commandTimeoutMs = Number(args.timeoutMs || process.env.TOKEN_MONITOR_TOKSCALE_TIMEOUT_MS || 120 * 1000);
 const limitsEnabled = parseBoolean(args.limits ?? args.limitsEnabled ?? process.env.TOKEN_MONITOR_LIMITS_ENABLED, true);
