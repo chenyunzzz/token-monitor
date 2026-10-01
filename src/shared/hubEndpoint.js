@@ -67,7 +67,40 @@ function isHubNetworkError(error) {
   return error?.name === 'AbortError' || (error instanceof TypeError && /fetch failed|network/i.test(error.message || ''));
 }
 
+function createHubEndpointSender(configuredUrl, options = {}) {
+  let successfulEndpoint = null;
+  let candidateKey = '';
+
+  return async function send(sendEndpoint) {
+    // Rediscover on every post: a WSL restart can replace the NAT gateway.
+    const candidates = hubUrlCandidates(configuredUrl, options);
+    const nextKey = candidates.join('\n');
+    if (nextKey !== candidateKey) {
+      candidateKey = nextKey;
+      successfulEndpoint = null;
+    }
+    const ordered = successfulEndpoint && candidates.includes(successfulEndpoint)
+      ? [successfulEndpoint, ...candidates.filter((endpoint) => endpoint !== successfulEndpoint)]
+      : candidates;
+    let lastError = null;
+    for (let index = 0; index < ordered.length; index += 1) {
+      const endpoint = ordered[index];
+      try {
+        const result = await sendEndpoint(endpoint);
+        successfulEndpoint = endpoint;
+        return result;
+      } catch (error) {
+        lastError = error;
+        if (!isHubNetworkError(error)) throw error;
+        if (index + 1 < ordered.length) options.onFallback?.(endpoint, ordered[index + 1]);
+      }
+    }
+    throw lastError;
+  };
+}
+
 module.exports = {
+  createHubEndpointSender,
   gatewayFromProcRoute,
   hubUrlCandidates,
   isHubNetworkError,

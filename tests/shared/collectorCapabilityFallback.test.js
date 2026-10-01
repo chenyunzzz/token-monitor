@@ -11,13 +11,11 @@ const assert = require('node:assert/strict');
 const test = require('node:test');
 const { EventEmitter } = require('node:events');
 const { referencedTerminationOptions } = require('../helpers/referencedTerminationTimers');
+const { installCollectorFixture, freshCollector } = require('../helpers/collectorFixture');
 
 const collectorPath = require.resolve('../../src/shared/collector');
 
-function freshCollector() {
-  delete require.cache[collectorPath];
-  return require(collectorPath);
-}
+installCollectorFixture(test);
 
 async function waitFor(predicate, timeoutMs = 2000) {
   const startedAt = Date.now();

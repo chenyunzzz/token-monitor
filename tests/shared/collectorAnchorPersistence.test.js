@@ -5,24 +5,21 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const test = require('node:test');
+const { installCollectorFixture, freshCollector } = require('../helpers/collectorFixture');
 
 const collectorPath = require.resolve('../../src/shared/collector');
-
-function freshCollector() {
-  delete require.cache[collectorPath];
-  return require(collectorPath);
-}
 
 const {
   configFingerprint,
   collectUsageOnce,
   localTodayKey,
   qoderCnSourcesForClients
-} = require('../../src/shared/collector');
+} = freshCollector();
 
 const { emptyPeriod } = require('../../src/shared/usage');
 const { installInProcessWatchHost } = require('../helpers/watchHost');
 
+installCollectorFixture(test);
 installInProcessWatchHost(test);
 
 const baseOptions = {

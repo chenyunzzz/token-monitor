@@ -29,11 +29,16 @@ const {
   readSessionUsageArchiveSnapshot
 } = require('../shared/usage/sessionUsageArchiveStore');
 const { createCursorUsageEventIndex } = require('../shared/providers/cursor/usageEvents');
-const { hubUrlCandidates, isHubNetworkError } = require('../shared/hubEndpoint');
+const { createHubEndpointSender } = require('../shared/hubEndpoint');
 
 loadDotEnv();
 const args = parseArgs(process.argv.slice(2));
 const configuredHubUrl = String(args.hub || args.hubUrl || process.env.TOKEN_MONITOR_HUB_URL || 'http://127.0.0.1:17321').replace(/\/$/, '');
+const sendToHub = createHubEndpointSender(configuredHubUrl, {
+  onFallback: (endpoint, nextEndpoint) => {
+    console.warn(`[sync] hub ${endpoint} unavailable; trying ${nextEndpoint}`);
+  }
+});
 const secret = String(args.secret || process.env.TOKEN_MONITOR_SECRET || '').trim();
 const deviceId = String(args.device || args.deviceId || process.env.TOKEN_MONITOR_DEVICE_ID || defaultDeviceId());
 const intervalMs = Number(args.interval || args.intervalMs || process.env.TOKEN_MONITOR_INTERVAL_MS || 5 * 60 * 1000);
@@ -140,11 +145,8 @@ function summaryWithSessionUsageArchive(summary, now = new Date()) {
 }
 
 async function postUsage(summary) {
-  let lastError = null;
-  const endpoints = hubUrlCandidates(configuredHubUrl);
-  for (let index = 0; index < endpoints.length; index += 1) {
-    const endpoint = endpoints[index];
-    try {
+  try {
+    return await sendToHub(async (endpoint) => {
       const fetchWithTimeout = (url, init = {}) => {
         const controller = new AbortController();
         const timeout = setTimeout(() => controller.abort(), 15_000);
@@ -161,16 +163,11 @@ async function postUsage(summary) {
       });
       if (!response.ok) throw new Error(`Hub responded ${response.status}: ${(await response.text()).slice(0, 300)}`);
       return response.json();
-    } catch (error) {
-      lastError = error;
-      if (!isHubNetworkError(error)) throw error;
-      if (index + 1 < endpoints.length) {
-        console.warn(`[sync] hub ${endpoint} unavailable; trying the current WSL gateway`);
-      }
-    }
+    });
+  } catch (error) {
+    const cause = error?.cause?.code ? ` (${error.cause.code})` : '';
+    throw new Error(`Hub sync failed for ${configuredHubUrl}: ${error?.message || 'unknown error'}${cause}`, { cause: error });
   }
-  const cause = lastError?.cause?.code ? ` (${lastError.cause.code})` : '';
-  throw new Error(`Hub sync failed for ${configuredHubUrl}: ${lastError?.message || 'unknown error'}${cause}`);
 }
 
 async function deliver(summary) {
