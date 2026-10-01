@@ -11,7 +11,7 @@ const main = fs.readFileSync(path.join(__dirname, '..', '..', 'src', 'electron',
 
 function functionSource(source, name, nextName) {
   const start = source.indexOf(`function ${name}(`);
-  const next = source.indexOf(`${nextName}(`, start + 1);
+  const next = source.indexOf(`function ${nextName}(`, start + 1);
   const end = next < 0 ? -1 : source.lastIndexOf('\n', next) + 1;
   assert.ok(start >= 0 && end > start, `${name} source should be present`);
   return source.slice(start, end);

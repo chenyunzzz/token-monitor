@@ -513,16 +513,16 @@ test('home limit windows ignore missing percentage values', () => {
   assert.deepEqual(rows, []);
 });
 
-test('homeModelRows returns one-line token shares without cost fields', () => {
+test('homeModelRows preserves TPS identity and token shares without cost fields', () => {
   const rows = homeModelRows([
-    { name: 'claude-opus-4-8', value: 34_000_000, cost: 21.96, color: '#cc7c5e' },
+    { name: 'claude-opus-4-8', rateKey: 'model:claude-opus-4-8', rateEntryId: 'Windows\u0000claude', value: 34_000_000, cost: 21.96, color: '#cc7c5e' },
     { name: 'gpt-5.5', value: 29_800_000, cost: 25.88, color: '#49a3b0' },
     { name: 'cost-only', value: 0, cost: 3.25, color: '#9aa0aa' }
   ], 63_800_000);
 
   assert.deepEqual(rows, [
-    { key: 'claude-opus-4-8', name: 'claude-opus-4-8', value: 34_000_000, share: 34_000_000 / 63_800_000, color: '#cc7c5e' },
-    { key: 'gpt-5.5', name: 'gpt-5.5', value: 29_800_000, share: 29_800_000 / 63_800_000, color: '#49a3b0' }
+    { key: 'claude-opus-4-8', name: 'claude-opus-4-8', rateKey: 'model:claude-opus-4-8', rateEntryId: 'Windows\u0000claude', value: 34_000_000, share: 34_000_000 / 63_800_000, color: '#cc7c5e' },
+    { key: 'gpt-5.5', name: 'gpt-5.5', rateKey: '', rateEntryId: '', value: 29_800_000, share: 29_800_000 / 63_800_000, color: '#49a3b0' }
   ]);
   assert.equal(Object.hasOwn(rows[0], 'cost'), false);
 });
