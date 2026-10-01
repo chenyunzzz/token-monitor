@@ -59,10 +59,6 @@ This fork's Windows widget uses `separateWslDevice` with both local WSL scans an
 
 The headless agent's Hub sender tries the configured endpoint and the current gateway on network failures. After success it prefers that endpoint for subsequent posts, avoiding a repeated timeout against an obsolete WSL address. It rediscovers candidates each time and resets the preference when they change; authentication, application, and response-parsing failures never trigger fallback.
 
-This fork's Windows widget uses `separateWslDevice` with both local WSL scans and fallback scans disabled: native Windows sources belong to its desktop device, while the WSL agent owns Linux sources and watches them locally. Preserve that boundary when integrating upstream; enabling a host fallback alongside the agent would count WSL usage twice or move it into Windows rows.
-
-The headless agent's Hub sender tries the configured endpoint and the current gateway on network failures. After success it prefers that endpoint for subsequent posts, avoiding a repeated timeout against an obsolete WSL address. It rediscovers candidates each time and resets the preference when they change; authentication, application, and response-parsing failures never trigger fallback.
-
 ### Subprocess lifecycle
 
 `SIGTERM` only requests termination. Aborts, timeouts and pipe failures stay pending until the child emits `close`, so a replacement tick waits behind the old runtime; an ignored request escalates to `SIGKILL`. If even that never reports `close`, a bounded grace emits `subprocess-termination-unconfirmed` and releases the barrier rather than deadlocking usage; the generation fence still rejects late output.
